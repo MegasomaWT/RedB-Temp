@@ -1343,7 +1343,7 @@ BEGIN
                         SELECT DISTINCT ON (d._hash) d._id, d._date_modify, d.depth
                         FROM descendants d
                         JOIN _objects o ON d._id = o._id
-                        WHERE d.depth > 0 AND o._id_scheme = %L %s
+                        WHERE d.depth > 0 AND o._id_scheme = %s %s
                         ORDER BY d._hash, d._date_modify DESC
                     ) distinct_sub
                     %s
@@ -1381,7 +1381,7 @@ BEGIN
                     SELECT d._id
                     FROM descendants d
                     JOIN _objects o ON d._id = o._id
-                    WHERE d.depth > 0 AND o._id_scheme = %L %s
+                    WHERE d.depth > 0 AND o._id_scheme = %s %s
                     %s
                     LIMIT %s OFFSET %s
                 ) sub',
@@ -1429,7 +1429,7 @@ BEGIN
                 SELECT COUNT(DISTINCT o._hash)
                 FROM descendants d
                 JOIN _objects o ON d._id = o._id
-                WHERE d.depth > 0 AND o._id_scheme = %L %s',
+                WHERE d.depth > 0 AND o._id_scheme = %s %s',
                 COALESCE(parent_id, 0),
                 parent_id,
                 max_depth,
@@ -1453,7 +1453,7 @@ BEGIN
                 SELECT COUNT(*)
                 FROM descendants d
                 JOIN _objects o ON d._id = o._id
-                WHERE d.depth > 0 AND o._id_scheme = %L %s',
+                WHERE d.depth > 0 AND o._id_scheme = %s %s',
                 COALESCE(parent_id, 0),
                 parent_id,
                 max_depth,
