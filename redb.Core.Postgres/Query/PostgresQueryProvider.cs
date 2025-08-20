@@ -55,6 +55,16 @@ public class PostgresQueryProvider : IRedbQueryProvider
         return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
     }
 
+    /// <summary>
+    /// Создать новый запрос для всех потомков указанной схемы (рекурсивный поиск)
+    /// </summary>
+    public IRedbQueryable<TProps> CreateDescendantsQuery<TProps>(long schemeId, long parentId, int maxDepth, long? userId = null, bool checkPermissions = false) 
+        where TProps : class, new()
+    {
+        var context = new QueryContext<TProps>(schemeId, userId, checkPermissions, parentId, maxDepth);
+        return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
+    }
+
     public async Task<object> ExecuteAsync(Expression expression, Type elementType)
     {
         // Извлекаем QueryContext из выражения
@@ -112,14 +122,32 @@ public class PostgresQueryProvider : IRedbQueryProvider
         var orderByJson = BuildOrderByJson(context);
         
         // Выполняем поиск с лимитом 0 для получения только count
-        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}) as result";
+        SearchJsonResult result;
+        
+        if (context.MaxDepth.HasValue)
+        {
+            // Для QueryDescendantsAsync - передаем 8 параметров включая max_depth
+            var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}, {5}) as result";
 
-        _logger?.LogDebug("LINQ Count Query: SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}", 
-            context.SchemeId, facetFilters, orderByJson);
+            _logger?.LogDebug("LINQ Count Query (Descendants): SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}, MaxDepth={MaxDepth}", 
+                context.SchemeId, facetFilters, orderByJson, context.MaxDepth);
 
-        var result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-            context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentId)
-            .FirstOrDefaultAsync();
+            result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+                context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentId, context.MaxDepth.Value)
+                .FirstOrDefaultAsync();
+        }
+        else
+        {
+            // Для QueryAsync и QueryChildrenAsync - передаем 7 параметров (max_depth = DEFAULT 1)
+            var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}) as result";
+
+            _logger?.LogDebug("LINQ Count Query: SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}", 
+                context.SchemeId, facetFilters, orderByJson);
+
+            result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+                context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentId)
+                .FirstOrDefaultAsync();
+        }
 
                 if (result?.result != null)
         {
@@ -143,20 +171,45 @@ public class PostgresQueryProvider : IRedbQueryProvider
         var orderByJson = BuildOrderByJson(context);
 
         // Строим SQL запрос - функция возвращает jsonb
-        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}) as result";
+        SearchJsonResult result;
+        
+        if (context.MaxDepth.HasValue)
+        {
+            // Для QueryDescendantsAsync - передаем 8 параметров включая max_depth
+            var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}, {7}) as result";
 
-        _logger?.LogDebug("LINQ ToList Query: SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}", 
-            context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson);
+            _logger?.LogDebug("LINQ ToList Query (Descendants): SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}, MaxDepth={MaxDepth}", 
+                context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson, context.MaxDepth);
 
-                var result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-            context.SchemeId, 
-            facetFilters, 
-            parameters.Limit ?? 100, 
-            parameters.Offset ?? 0,
-            context.IsDistinct,
-            orderByJson ?? "null",
-            context.ParentId)
-            .FirstOrDefaultAsync();
+            result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+                context.SchemeId, 
+                facetFilters, 
+                parameters.Limit ?? 100, 
+                parameters.Offset ?? 0,
+                context.IsDistinct,
+                orderByJson ?? "null",
+                context.ParentId,
+                context.MaxDepth.Value)
+                .FirstOrDefaultAsync();
+        }
+        else
+        {
+            // Для QueryAsync и QueryChildrenAsync - передаем 7 параметров (max_depth = DEFAULT 1)
+            var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}) as result";
+
+            _logger?.LogDebug("LINQ ToList Query: SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}", 
+                context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson);
+
+            result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+                context.SchemeId, 
+                facetFilters, 
+                parameters.Limit ?? 100, 
+                parameters.Offset ?? 0,
+                context.IsDistinct,
+                orderByJson ?? "null",
+                context.ParentId)
+                .FirstOrDefaultAsync();
+        }
 
         if (result?.result != null)
         {

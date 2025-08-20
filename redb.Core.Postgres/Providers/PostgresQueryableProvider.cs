@@ -131,6 +131,13 @@ namespace redb.Core.Postgres.Providers
             return queryProvider.CreateChildrenQuery<TProps>(schemeId, parentId, userId, checkPermissions);
         }
 
+        private IRedbQueryable<TProps> QueryDescendantsPrivate<TProps>(long schemeId, long parentId, int? maxDepth = null, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        {
+            var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth;
+            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
+            return queryProvider.CreateDescendantsQuery<TProps>(schemeId, parentId, actualMaxDepth, userId, checkPermissions);
+        }
+
         // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ДОЧЕРНИМИ ОБЪЕКТАМИ =====
         
         public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj) where TProps : class, new()
@@ -160,6 +167,37 @@ namespace redb.Core.Postgres.Providers
             
             var effectiveUser = _securityContext.GetEffectiveUser();
             return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ (РЕКУРСИВНО) =====
+        
+        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+            
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+            
+            return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+            
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
 
     }

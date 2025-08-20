@@ -573,5 +573,16 @@ namespace redb.Core.Postgres
         public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject parentObj) where TProps : class, new()
             => _queryProvider.QueryChildren<TProps>(parentObj);
 
+        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ (РЕКУРСИВНО) =====
+        
+        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.QueryDescendantsAsync<TProps>(parentObj, maxDepth);
+
+        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.QueryDescendantsAsync<TProps>(parentObj, user, maxDepth);
+
+        public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.QueryDescendants<TProps>(parentObj, maxDepth);
+
     }
 }
