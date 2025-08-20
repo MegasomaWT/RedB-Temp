@@ -125,5 +125,42 @@ namespace redb.Core.Postgres.Providers
             return QueryPrivate<TProps>(scheme.Id, userId, checkPermissions);
         }
 
+        private IRedbQueryable<TProps> QueryChildrenPrivate<TProps>(long schemeId, long parentId, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        {
+            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
+            return queryProvider.CreateChildrenQuery<TProps>(schemeId, parentId, userId, checkPermissions);
+        }
+
+        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ДОЧЕРНИМИ ОБЪЕКТАМИ =====
+        
+        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+            
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj, IRedbUser user) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+            
+            return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject parentObj) where TProps : class, new()
+        {
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+            
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
     }
 }

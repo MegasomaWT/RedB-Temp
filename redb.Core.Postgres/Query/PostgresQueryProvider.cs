@@ -45,6 +45,16 @@ public class PostgresQueryProvider : IRedbQueryProvider
         return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
     }
 
+    /// <summary>
+    /// Создать новый запрос для дочерних объектов указанной схемы
+    /// </summary>
+    public IRedbQueryable<TProps> CreateChildrenQuery<TProps>(long schemeId, long parentId, long? userId = null, bool checkPermissions = false) 
+        where TProps : class, new()
+    {
+        var context = new QueryContext<TProps>(schemeId, userId, checkPermissions, parentId);
+        return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
+    }
+
     public async Task<object> ExecuteAsync(Expression expression, Type elementType)
     {
         // Извлекаем QueryContext из выражения
@@ -102,13 +112,13 @@ public class PostgresQueryProvider : IRedbQueryProvider
         var orderByJson = BuildOrderByJson(context);
         
         // Выполняем поиск с лимитом 0 для получения только count
-        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb) as result";
+        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}) as result";
 
         _logger?.LogDebug("LINQ Count Query: SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}", 
             context.SchemeId, facetFilters, orderByJson);
 
         var result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-            context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null")
+            context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentId)
             .FirstOrDefaultAsync();
 
                 if (result?.result != null)
@@ -133,7 +143,7 @@ public class PostgresQueryProvider : IRedbQueryProvider
         var orderByJson = BuildOrderByJson(context);
 
         // Строим SQL запрос - функция возвращает jsonb
-        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb) as result";
+        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}) as result";
 
         _logger?.LogDebug("LINQ ToList Query: SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}", 
             context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson);
@@ -144,7 +154,8 @@ public class PostgresQueryProvider : IRedbQueryProvider
             parameters.Limit ?? 100, 
             parameters.Offset ?? 0,
             context.IsDistinct,
-            orderByJson ?? "null")
+            orderByJson ?? "null",
+            context.ParentId)
             .FirstOrDefaultAsync();
 
         if (result?.result != null)

@@ -11,6 +11,7 @@ public class QueryContext<TProps> where TProps : class, new()
     public long SchemeId { get; init; }
     public long? UserId { get; init; }
     public bool CheckPermissions { get; init; }
+    public long? ParentId { get; init; }
     
     public FilterExpression? Filter { get; set; }
     public List<OrderingExpression> Orderings { get; set; } = new();
@@ -18,11 +19,12 @@ public class QueryContext<TProps> where TProps : class, new()
     public int? Offset { get; set; }
     public bool IsDistinct { get; set; }
     
-    public QueryContext(long schemeId, long? userId = null, bool checkPermissions = false)
+    public QueryContext(long schemeId, long? userId = null, bool checkPermissions = false, long? parentId = null)
     {
         SchemeId = schemeId;
         UserId = userId;
         CheckPermissions = checkPermissions;
+        ParentId = parentId;
     }
     
     /// <summary>
@@ -30,7 +32,7 @@ public class QueryContext<TProps> where TProps : class, new()
     /// </summary>
     public QueryContext<TProps> Clone()
     {
-        return new QueryContext<TProps>(SchemeId, UserId, CheckPermissions)
+        return new QueryContext<TProps>(SchemeId, UserId, CheckPermissions, ParentId)
         {
             Filter = Filter,
             Orderings = new List<OrderingExpression>(Orderings),

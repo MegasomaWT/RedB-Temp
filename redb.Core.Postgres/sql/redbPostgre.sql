@@ -1054,7 +1054,8 @@ CREATE OR REPLACE FUNCTION search_objects_with_facets(
     limit_count integer DEFAULT 100,
     offset_count integer DEFAULT 0,
     distinct_mode boolean DEFAULT false,
-    order_by jsonb DEFAULT NULL
+    order_by jsonb DEFAULT NULL,
+    parent_id bigint DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE 'plpgsql'
 COST 100
@@ -1199,6 +1200,11 @@ BEGIN
         END LOOP;
     END IF;
     
+    -- Добавляем фильтрацию по родительскому объекту
+    IF parent_id IS NOT NULL THEN
+        where_conditions := where_conditions || format(' AND o._id_parent = %L', parent_id);
+    END IF;
+    
     -- Обрабатываем параметры сортировки
     IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' THEN
         order_conditions := 'ORDER BY ';
@@ -1333,7 +1339,7 @@ END;
 $BODY$;
 
 -- Комментарий к функции фасетного поиска
-COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb) IS 'Функция фасетного поиска объектов с фильтрацией по значениям полей. Возвращает полные объекты через get_object_json с фасетами для UI. Поддерживает DISTINCT для уникальных результатов и динамическую сортировку ORDER BY';
+COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint) IS 'Функция фасетного поиска объектов с фильтрацией по значениям полей и родительскому объекту. Возвращает полные объекты через get_object_json с фасетами для UI. Поддерживает DISTINCT для уникальных результатов и динамическую сортировку ORDER BY. Параметр parent_id позволяет искать только дочерние объекты указанного родителя';
 
 -- Функция получения разрешений пользователя для конкретного объекта
 CREATE OR REPLACE FUNCTION get_user_permissions_for_object(

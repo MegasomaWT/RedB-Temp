@@ -53,5 +53,20 @@ namespace redb.Core.Providers
         /// Создать типобезопасный запрос по типу с указанным пользователем (синхронно)
         /// </summary>
         IRedbQueryable<TProps> Query<TProps>(IRedbUser user) where TProps : class, new();
+        
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов (автоматически определит схему по типу)
+        /// </summary>
+        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj) where TProps : class, new();
+        
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов с указанным пользователем
+        /// </summary>
+        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj, IRedbUser user) where TProps : class, new();
+        
+        /// <summary>
+        /// Синхронная версия запроса дочерних объектов
+        /// </summary>
+        IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject parentObj) where TProps : class, new();
     }
 }

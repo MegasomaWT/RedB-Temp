@@ -561,8 +561,17 @@ namespace redb.Core.Postgres
         /// </summary>
         public Task<IEnumerable<ITreeRedbObject>> GetPolymorphicDescendantsAsync(IRedbObject parentObj, IRedbUser user, int? maxDepth = null)
             => _treeProvider.GetPolymorphicDescendantsAsync(parentObj, user, maxDepth);
-            
 
+        // ===== НОВЫЕ МЕТОДЫ ДЛЯ РАБОТЫ С ДОЧЕРНИМИ ОБЪЕКТАМИ =====
+        
+        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj) where TProps : class, new()
+            => _queryProvider.QueryChildrenAsync<TProps>(parentObj);
+
+        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj, IRedbUser user) where TProps : class, new()
+            => _queryProvider.QueryChildrenAsync<TProps>(parentObj, user);
+
+        public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject parentObj) where TProps : class, new()
+            => _queryProvider.QueryChildren<TProps>(parentObj);
 
     }
 }
