@@ -584,5 +584,43 @@ namespace redb.Core.Postgres
         public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
             => _queryProvider.QueryDescendants<TProps>(parentObj, maxDepth);
 
+        // ===== BATCH МЕТОДЫ ДЛЯ РАБОТЫ С НЕСКОЛЬКИМИ РОДИТЕЛЬСКИМИ ОБЪЕКТАМИ =====
+
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей
+        /// </summary>
+        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
+            => _queryProvider.QueryChildrenAsync<TProps>(parentObjs);
+
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей с указанным пользователем
+        /// </summary>
+        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user) where TProps : class, new()
+            => _queryProvider.QueryChildrenAsync<TProps>(parentObjs, user);
+
+        /// <summary>
+        /// Синхронная версия запроса дочерних объектов нескольких родителей
+        /// </summary>
+        public IRedbQueryable<TProps> QueryChildren<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
+            => _queryProvider.QueryChildren<TProps>(parentObjs);
+
+        /// <summary>
+        /// Создать типобезопасный запрос для всех потомков нескольких родителей
+        /// </summary>
+        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.QueryDescendantsAsync<TProps>(parentObjs, maxDepth);
+
+        /// <summary>
+        /// Создать типобезопасный запрос для всех потомков нескольких родителей с указанным пользователем
+        /// </summary>
+        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.QueryDescendantsAsync<TProps>(parentObjs, user, maxDepth);
+
+        /// <summary>
+        /// Синхронная версия запроса потомков нескольких родителей
+        /// </summary>
+        public IRedbQueryable<TProps> QueryDescendants<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.QueryDescendants<TProps>(parentObjs, maxDepth);
+
     }
 }

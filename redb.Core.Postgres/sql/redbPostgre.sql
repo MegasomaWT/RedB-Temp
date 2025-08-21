@@ -1680,6 +1680,291 @@ $BODY$;
 -- Комментарий к функции для потомков
 COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint, integer) IS 'Фасетный поиск всех потомков указанного родителя до заданной глубины с рекурсивным обходом. Использует WITH RECURSIVE CTE для эффективного поиска в иерархии.';
 
+-- ===== BATCH ПЕРЕГРУЗКИ (ИСПОЛЬЗУЯ МОДУЛЬНУЮ АРХИТЕКТУРУ) =====
+
+-- Batch функция фасетного поиска детей (с parent_ids bigint[])
+CREATE OR REPLACE FUNCTION search_objects_with_facets(
+    scheme_id bigint,
+    facet_filters jsonb,
+    limit_count integer,
+    offset_count integer,
+    distinct_mode boolean,
+    order_by jsonb,
+    parent_ids bigint[]
+) RETURNS jsonb
+LANGUAGE 'plpgsql'
+COST 100
+VOLATILE NOT LEAKPROOF
+AS $BODY$
+DECLARE
+    objects_result jsonb;
+    total_count integer;
+    where_conditions text := _build_facet_conditions(facet_filters);
+    order_conditions text := _build_order_conditions(order_by, false);
+    query_text text;
+BEGIN
+    -- Добавляем фильтрацию по МАССИВУ родительских объектов
+    IF parent_ids IS NOT NULL AND array_length(parent_ids, 1) > 0 THEN
+        where_conditions := where_conditions || format(' AND o._id_parent = ANY(%L)', parent_ids);
+    END IF;
+    
+    -- Формируем основной запрос для получения объектов (аналогично children функции)
+    IF distinct_mode THEN
+        -- DISTINCT запрос с двухэтапным подходом
+        IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' THEN
+            -- DISTINCT + пользовательская сортировка
+            query_text := format('
+                SELECT jsonb_agg(
+                    get_object_json(sorted._id, 10)
+                )
+                FROM (
+                    SELECT distinct_sub._id
+                    FROM (
+                        SELECT DISTINCT ON (o._hash) o._id, o._date_modify
+                        FROM _objects o
+                        WHERE o._id_scheme = %s %s
+                        ORDER BY o._hash, o._date_modify DESC
+                    ) distinct_sub
+                    JOIN _objects o ON o._id = distinct_sub._id %s
+                    LIMIT %s OFFSET %s
+                ) sorted',
+                scheme_id,
+                where_conditions,
+                order_conditions,
+                limit_count,
+                offset_count
+            );
+        ELSE
+            -- DISTINCT без пользовательской сортировки
+            query_text := format('
+                SELECT jsonb_agg(
+                    get_object_json(sub._id, 10)
+                )
+                FROM (
+                    SELECT DISTINCT ON (o._hash) o._id, o._date_modify
+                    FROM _objects o
+                    WHERE o._id_scheme = %s %s
+                    ORDER BY o._hash, o._date_modify DESC
+                    LIMIT %s OFFSET %s
+                ) sub',
+                scheme_id,
+                where_conditions,
+                limit_count,
+                offset_count
+            );
+        END IF;
+    ELSE
+        -- Обычный запрос без DISTINCT
+        query_text := format('
+            SELECT jsonb_agg(
+                get_object_json(sub._id, 10)
+            )
+            FROM (
+                SELECT o._id
+                FROM _objects o
+                WHERE o._id_scheme = %s %s %s
+                LIMIT %s OFFSET %s
+            ) sub',
+            scheme_id,
+            where_conditions,
+            order_conditions,
+            limit_count,
+            offset_count
+        );
+    END IF;
+    
+    -- Выполняем запрос для получения объектов
+    EXECUTE query_text INTO objects_result;
+    
+    -- Получаем общее количество для пагинации
+    query_text := format('
+        SELECT COUNT(*)
+        FROM _objects o
+        WHERE o._id_scheme = %s %s',
+        scheme_id,
+        where_conditions
+    );
+    
+    EXECUTE query_text INTO total_count;
+    
+    -- Возвращаем финальный результат через модуль
+    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
+END;
+$BODY$;
+
+-- Batch функция фасетного поиска потомков (с parent_ids bigint[] и max_depth)
+CREATE OR REPLACE FUNCTION search_objects_with_facets(
+    scheme_id bigint,
+    facet_filters jsonb,
+    limit_count integer,
+    offset_count integer,
+    distinct_mode boolean,
+    order_by jsonb,
+    parent_ids bigint[],
+    max_depth integer
+) RETURNS jsonb
+LANGUAGE 'plpgsql'
+COST 100
+VOLATILE NOT LEAKPROOF
+AS $BODY$
+DECLARE
+    objects_result jsonb;
+    total_count integer;
+    where_conditions text := _build_facet_conditions(facet_filters);
+    order_conditions text := _build_order_conditions(order_by, true); -- рекурсивный алиас
+    clean_where_conditions text;
+    query_text text;
+BEGIN
+    -- Убираем parent_ids из фасетных условий для рекурсивного запроса
+    clean_where_conditions := where_conditions; -- для batch не нужно убирать parent_id условие
+    
+    -- Формируем рекурсивный запрос для получения всех потомков из МАССИВА родителей
+    IF distinct_mode THEN
+        -- DISTINCT рекурсивный запрос
+        query_text := format('
+            WITH RECURSIVE descendants AS (
+                -- Базовый случай: начинаем с МАССИВА родительских объектов (любой схемы)
+                SELECT unnest(%L::bigint[]) as _id, NULL::varchar as _hash, NULL::timestamp as _date_modify, 0::integer as depth
+                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
+                
+                UNION ALL
+                
+                -- Рекурсия: обходим ВСЕ дочерние объекты, фильтруем по схеме только в результате
+                SELECT o._id, o._hash, o._date_modify, d.depth + 1
+                FROM _objects o
+                JOIN descendants d ON o._id_parent = d._id
+                WHERE d.depth < %s
+            )
+            SELECT jsonb_agg(
+                get_object_json(sorted._id, 10)
+            )
+            FROM (
+                SELECT distinct_sub._id
+                FROM (
+                    SELECT DISTINCT ON (d._hash) d._id, d._date_modify, d.depth
+                    FROM descendants d
+                    JOIN _objects o ON d._id = o._id
+                    WHERE d.depth > 0 AND o._id_scheme = %s %s
+                    ORDER BY d._hash, d._date_modify DESC
+                ) distinct_sub %s
+                LIMIT %s OFFSET %s
+            ) sorted',
+            parent_ids,
+            parent_ids,
+            parent_ids,
+            max_depth,
+            scheme_id,
+            clean_where_conditions,
+            order_conditions,
+            limit_count,
+            offset_count
+        );
+    ELSE
+        -- Рекурсивный обычный запрос
+        query_text := format('
+            WITH RECURSIVE descendants AS (
+                -- Базовый случай: начинаем с МАССИВА родительских объектов (любой схемы)
+                SELECT unnest(%L::bigint[]) as _id, 0::integer as depth
+                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
+                
+                UNION ALL
+                
+                -- Рекурсия: обходим ВСЕ дочерние объекты, фильтруем по схеме только в результате
+                SELECT o._id, d.depth + 1
+                FROM _objects o
+                JOIN descendants d ON o._id_parent = d._id
+                WHERE d.depth < %s
+            )
+            SELECT jsonb_agg(
+                get_object_json(sub._id, 10)
+            )
+            FROM (
+                SELECT d._id
+                FROM descendants d
+                JOIN _objects o ON d._id = o._id
+                WHERE d.depth > 0 AND o._id_scheme = %s %s %s
+                LIMIT %s OFFSET %s
+            ) sub',
+            parent_ids,
+            parent_ids,  
+            parent_ids,
+            max_depth,
+            scheme_id,
+            clean_where_conditions,
+            order_conditions,
+            limit_count,
+            offset_count
+        );
+    END IF;
+    
+    -- Выполняем запрос для получения объектов
+    EXECUTE query_text INTO objects_result;
+    
+    -- Получаем общее количество потомков для пагинации
+    IF distinct_mode THEN
+        -- Подсчет с учетом DISTINCT
+        query_text := format('
+            WITH RECURSIVE descendants AS (
+                SELECT unnest(%L::bigint[]) as _id, NULL::varchar as _hash, 0::integer as depth
+                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
+                
+                UNION ALL
+                
+                SELECT o._id, o._hash, d.depth + 1
+                FROM _objects o
+                JOIN descendants d ON o._id_parent = d._id
+                WHERE d.depth < %s
+            )
+            SELECT COUNT(DISTINCT o._hash)
+            FROM descendants d
+            JOIN _objects o ON d._id = o._id
+            WHERE d.depth > 0 AND o._id_scheme = %s %s',
+            parent_ids,
+            parent_ids,
+            parent_ids,
+            max_depth,
+            scheme_id,
+            clean_where_conditions
+        );
+    ELSE
+        -- Обычный рекурсивный подсчет
+        query_text := format('
+            WITH RECURSIVE descendants AS (
+                SELECT unnest(%L::bigint[]) as _id, 0::integer as depth
+                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
+                
+                UNION ALL
+                
+                SELECT o._id, d.depth + 1
+                FROM _objects o
+                JOIN descendants d ON o._id_parent = d._id
+                WHERE d.depth < %s
+            )
+            SELECT COUNT(*)
+            FROM descendants d
+            JOIN _objects o ON d._id = o._id
+            WHERE d.depth > 0 AND o._id_scheme = %s %s',
+            parent_ids,
+            parent_ids,
+            parent_ids,
+            max_depth,
+            scheme_id,
+            clean_where_conditions
+        );
+    END IF;
+    
+    EXECUTE query_text INTO total_count;
+    
+    -- Возвращаем финальный результат через модуль
+    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
+END;
+$BODY$;
+
+-- Комментарии к batch функциям
+COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint[]) IS 'Batch фасетный поиск прямых дочерних объектов МАССИВА родителей. Один SQL запрос вместо N отдельных вызовов для максимальной производительности.';
+
+COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint[], integer) IS 'Batch фасетный поиск всех потомков МАССИВА родителей до заданной глубины с рекурсивным обходом. Использует WITH RECURSIVE CTE с unnest() для эффективного поиска в иерархии от множества корневых объектов.';
+
 -- Функция получения разрешений пользователя для конкретного объекта
 CREATE OR REPLACE FUNCTION get_user_permissions_for_object(
     p_object_id bigint,

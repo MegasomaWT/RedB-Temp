@@ -1,6 +1,8 @@
 using redb.Core.Query;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 using redb.Core.Models.Contracts;
+using redb.Core.Models.Security;
 
 namespace redb.Core.Providers
 {
@@ -83,5 +85,37 @@ namespace redb.Core.Providers
         /// Синхронная версия запроса потомков
         /// </summary>
         IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new();
+
+        // ===== BATCH МЕТОДЫ ДЛЯ РАБОТЫ С НЕСКОЛЬКИМИ РОДИТЕЛЬСКИМИ ОБЪЕКТАМИ =====
+
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей
+        /// </summary>
+        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new();
+
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей с указанным пользователем
+        /// </summary>
+        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user) where TProps : class, new();
+
+        /// <summary>
+        /// Синхронная версия запроса дочерних объектов нескольких родителей
+        /// </summary>
+        IRedbQueryable<TProps> QueryChildren<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new();
+
+        /// <summary>
+        /// Создать типобезопасный запрос для всех потомков нескольких родителей
+        /// </summary>
+        Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new();
+
+        /// <summary>
+        /// Создать типобезопасный запрос для всех потомков нескольких родителей с указанным пользователем
+        /// </summary>
+        Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+
+        /// <summary>
+        /// Синхронная версия запроса потомков нескольких родителей
+        /// </summary>
+        IRedbQueryable<TProps> QueryDescendants<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new();
     }
 }

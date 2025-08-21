@@ -8,6 +8,8 @@ using redb.Core.Models.Contracts;
 using redb.Core.Models.Configuration;
 using redb.Core.Models.Security;
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace redb.Core.Postgres.Providers
 {
@@ -198,6 +200,125 @@ namespace redb.Core.Postgres.Providers
             
             var effectiveUser = _securityContext.GetEffectiveUser();
             return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        // ===== BATCH МЕТОДЫ ДЛЯ РАБОТЫ С ДЕТЬМИ НЕСКОЛЬКИХ ОБЪЕКТОВ =====
+        
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей (автоматически определит схему по типу)
+        /// </summary>
+        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
+        {
+            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+                
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryChildrenBatchPrivate<TProps>(scheme.Id, parentIds, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        /// <summary>
+        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей с указанным пользователем
+        /// </summary>
+        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user) where TProps : class, new()
+        {
+            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+                
+            return QueryChildrenBatchPrivate<TProps>(scheme.Id, parentIds, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        /// <summary>
+        /// Синхронная версия запроса дочерних объектов нескольких родителей
+        /// </summary>
+        public IRedbQueryable<TProps> QueryChildren<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
+        {
+            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+                
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryChildrenBatchPrivate<TProps>(scheme.Id, parentIds, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ НЕСКОЛЬКИХ ОБЪЕКТОВ =====
+        
+        /// <summary>
+        /// Создать типобезопасный запрос для всех потомков нескольких родителей (автоматически определит схему по типу)
+        /// </summary>
+        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
+        {
+            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+                
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryDescendantsBatchPrivate<TProps>(scheme.Id, parentIds, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        /// <summary>
+        /// Создать типобезопасный запрос для всех потомков нескольких родителей с указанным пользователем
+        /// </summary>
+        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+                
+            return QueryDescendantsBatchPrivate<TProps>(scheme.Id, parentIds, maxDepth, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+        
+        /// <summary>
+        /// Синхронная версия запроса потомков нескольких родителей
+        /// </summary>
+        public IRedbQueryable<TProps> QueryDescendants<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
+        {
+            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+                
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return QueryDescendantsBatchPrivate<TProps>(scheme.Id, parentIds, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        // ===== ПРИВАТНЫЕ BATCH МЕТОДЫ =====
+        
+        private IRedbQueryable<TProps> QueryChildrenBatchPrivate<TProps>(long schemeId, long[] parentIds, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        {
+            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
+            return queryProvider.CreateChildrenBatchQuery<TProps>(schemeId, parentIds, userId, checkPermissions);
+        }
+        
+        private IRedbQueryable<TProps> QueryDescendantsBatchPrivate<TProps>(long schemeId, long[] parentIds, int? maxDepth = null, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        {
+            var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth;
+            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
+            return queryProvider.CreateDescendantsBatchQuery<TProps>(schemeId, parentIds, actualMaxDepth, userId, checkPermissions);
         }
 
     }

@@ -1,4 +1,4 @@
-# План реализации QueryChildren/DescendantsBatchAsync
+# План реализации QueryChildren/DescendantsBatchAsync (ОБНОВЛЕН ДЛЯ МОДУЛЬНОЙ АРХИТЕКТУРЫ)
 
 ## Цель
 Добавить перегрузки для `QueryChildrenAsync` и `QueryDescendantsAsync`, принимающие **список родительских объектов** (`IEnumerable<IRedbObject>`) вместо одного, для массового поиска детей/потомков с максимальной эффективностью.
@@ -7,12 +7,13 @@
 Текущий подход требует **N отдельных вызовов** для поиска детей/потомков множества объектов.
 Новые методы должны использовать **один SQL запрос** с `parent_ids bigint[]` → критично быстрее.
 
-## Архитектурное решение
-**Создать перегрузки функции** `search_objects_with_facets` через PostgreSQL function overloading:
+## Архитектурное решение (МОДУЛЬНАЯ АРХИТЕКТУРА)
+**Использовать существующую модульную архитектуру** с добавлением batch перегрузок:
+- ✅ **Модульная база**: переиспользование `_build_facet_conditions`, `_build_order_conditions`, `_build_search_result`
 - ✅ **Чистый API**: отдельная функция для каждого случая (одиночный/массовый)
 - ✅ **Максимальная производительность**: каждая перегрузка оптимизирована под свой случай
 - ✅ **Полная обратная совместимость**: существующие вызовы остаются нетронутыми
-- ✅ **Элегантная архитектура**: общая логика в приватной функции, тонкие публичные обертки
+- ✅ **Элегантная архитектура**: модули + специализированные функции
 - ✅ Один SQL запрос вместо N отдельных вызовов
 - ✅ Полная поддержка LINQ-фильтрации для результатов
 
@@ -20,69 +21,59 @@
 
 ### Рекомендуемый порядок выполнения (снизу вверх):
 
-### 1. Рефакторинг SQL функций (PostgreSQL overloading)
-- [ ] В `redb.Core.Postgres/sql/redbPostgre.sql` создать архитектуру overloading:
-  - **Шаг 1**: Создать приватную функцию `_search_objects_with_facets_internal` с `parent_ids bigint[]`:
-    ```sql
-    CREATE OR REPLACE FUNCTION _search_objects_with_facets_internal(
-        scheme_id bigint,
-        facet_filters jsonb DEFAULT NULL,
-        limit_count integer DEFAULT 100,
-        offset_count integer DEFAULT 0,
-        distinct_mode boolean DEFAULT false,
-        order_by jsonb DEFAULT NULL,
-        parent_ids bigint[] DEFAULT NULL,  -- всегда массив внутри
-        max_depth integer DEFAULT 1
-    ) RETURNS jsonb
-    ```
-    - Перенести ВСЮ логику из существующей функции
-    - Заменить `WHERE o._id_parent = parent_id` на `WHERE o._id_parent = ANY(parent_ids)`
-    - Для рекурсивного CTE: `d._id IN (SELECT unnest(parent_ids))`
+### 1. Добавление batch перегрузок (ИСПОЛЬЗУЯ МОДУЛЬНУЮ АРХИТЕКТУРУ)
+- [ ] В `redb.Core.Postgres/sql/redbPostgre.sql` добавить batch перегрузки:
+  - **✅ Существующая база**: У нас уже есть:
+    - Модули: `_build_facet_conditions`, `_build_order_conditions`, `_build_search_result`
+    - 3 перегрузки: базовая (6 параметров), children (7), descendants (8)
   
-  - **Шаг 2**: Превратить существующую функцию в тонкую обертку:
+  - **Шаг 1**: Добавить batch перегрузку для children (7 параметров + массив):
     ```sql
     CREATE OR REPLACE FUNCTION search_objects_with_facets(
         scheme_id bigint,
-        facet_filters jsonb DEFAULT NULL,
-        limit_count integer DEFAULT 100,
-        offset_count integer DEFAULT 0,
-        distinct_mode boolean DEFAULT false,
-        order_by jsonb DEFAULT NULL,
-        parent_id bigint DEFAULT NULL,
-        max_depth integer DEFAULT 1
+        facet_filters jsonb,
+        limit_count integer,
+        offset_count integer,
+        distinct_mode boolean,
+        order_by jsonb,
+        parent_ids bigint[]  -- массив вместо одиночного parent_id
     ) RETURNS jsonb
-    AS $$
+    LANGUAGE 'plpgsql'
+    COST 100
+    VOLATILE NOT LEAKPROOF
+    AS $BODY$
+    DECLARE
+        objects_result jsonb;
+        total_count integer;
+        where_conditions text := _build_facet_conditions(facet_filters);
+        order_conditions text := _build_order_conditions(order_by, false);
+        query_text text;
     BEGIN
-        RETURN _search_objects_with_facets_internal(
-            scheme_id, facet_filters, limit_count, offset_count,
-            distinct_mode, order_by,
-            CASE WHEN parent_id IS NULL THEN NULL ELSE ARRAY[parent_id] END,
-            max_depth
-        );
+        -- Добавляем фильтрацию по МАССИВУ родительских объектов
+        IF parent_ids IS NOT NULL AND array_length(parent_ids, 1) > 0 THEN
+            where_conditions := where_conditions || format(' AND o._id_parent = ANY(%L)', parent_ids);
+        END IF;
+        
+        -- Используем существующие запросы, заменив parent_id на ANY(parent_ids)
+        -- ... остальная логика идентична children функции
+        RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
     END;
-    $$ LANGUAGE plpgsql;
+    $BODY$;
     ```
   
-  - **Шаг 3**: Создать новую перегрузку для массивов:
+  - **Шаг 2**: Добавить batch перегрузку для descendants (8 параметров + массив):
     ```sql
     CREATE OR REPLACE FUNCTION search_objects_with_facets(
         scheme_id bigint,
-        facet_filters jsonb DEFAULT NULL,
-        limit_count integer DEFAULT 100,
-        offset_count integer DEFAULT 0,
-        distinct_mode boolean DEFAULT false,
-        order_by jsonb DEFAULT NULL,
-        parent_ids bigint[] DEFAULT NULL,
-        max_depth integer DEFAULT 1
+        facet_filters jsonb,
+        limit_count integer,
+        offset_count integer,
+        distinct_mode boolean,
+        order_by jsonb,
+        parent_ids bigint[],  -- массив вместо одиночного parent_id
+        max_depth integer
     ) RETURNS jsonb
-    AS $$
-    BEGIN
-        RETURN _search_objects_with_facets_internal(
-            scheme_id, facet_filters, limit_count, offset_count,
-            distinct_mode, order_by, parent_ids, max_depth
-        );
-    END;
-    $$ LANGUAGE plpgsql;
+    -- Аналогично, но с рекурсивной логикой: d._id = ANY(parent_ids)
     ```
 
 - [ ] **Тест**: Проверить в БД:
@@ -90,117 +81,84 @@
   - `SELECT search_objects_with_facets(1, null, 10, 0, false, null, ARRAY[123, 124, 125], 1);` (массив - children batch)
   - `SELECT search_objects_with_facets(1, null, 10, 0, false, null, ARRAY[123, 124, 125], 3);` (массив - descendants batch)
 
-### 2. Создание специализированных QueryContext (БЕЗ ИЗМЕНЕНИЙ в существующем коде!)
-- [ ] **НЕ ТРОГАЕМ** существующий `QueryContext<TProps>` - он остается без изменений!
-- [ ] Создадим **отдельные контексты** для batch операций в `PostgresQueryProvider`:
+### 2. Обновление PostgresQueryProvider (МИНИМАЛЬНЫЕ ИЗМЕНЕНИЯ)
+- [ ] **✅ Существующая архитектура**: У нас уже есть отличная логика маршрутизации:
   ```csharp
-  // Для одиночных операций - используем существующий QueryContext
-  // QueryContext(schemeId, userId, checkPermissions, parentId, maxDepth)
-  
-  // Для batch операций - создадим простой класс-маркер
-  private class BatchQueryInfo
-  {
-      public long SchemeId { get; init; }
-      public long[] ParentIds { get; init; }
-      public int MaxDepth { get; init; }
-      public long? UserId { get; init; }
-      public bool CheckPermissions { get; init; }
-  }
+  // Текущая логика в ExecuteToListAsync:
+  if (context.MaxDepth.HasValue && context.ParentId.HasValue)
+      // 8-параметровая функция (descendants)
+  else if (context.ParentId.HasValue) 
+      // 7-параметровая функция (children)
+  else
+      // 6-параметровая функция (базовая)
   ```
-- [ ] **Преимущество**: Полная изоляция - никаких взаимоисключающих параметров, никаких валидаций
-
-### 3. Создание специализированных методов выполнения (БЕЗ ИЗМЕНЕНИЙ в существующих!)
-- [ ] **НЕ ТРОГАЕМ** существующие методы! `ExecuteToListAsync` и `ExecuteCountAsync` остаются как есть
-- [ ] Создать **отдельные методы** для batch операций в `PostgresQueryProvider`:
+- [ ] **Добавить batch поддержку** в существующие методы:
   ```csharp
-  // Новые методы специально для batch операций
-  public async Task<List<TProps>> ExecuteBatchToListAsync<TProps>(
-      BatchQueryInfo batchInfo,
-      QueryParameters parameters,
-      CancellationToken cancellationToken) where TProps : class, new()
+  // Расширить логику на batch массивы
+  if (context.MaxDepth.HasValue && (context.ParentId.HasValue || context.ParentIds != null))
+      // Batch descendants (8 параметров + массив) ИЛИ одиночная descendants
+  else if (context.ParentId.HasValue || context.ParentIds != null) 
+      // Batch children (7 параметров + массив) ИЛИ одиночная children
+  else
+      // Базовая функция (6 параметров)
+  ```
+- [ ] **Добавить в QueryContext**: `public long[]? ParentIds { get; set; }`
+
+### 3. Расширение существующих методов (ЭЛЕГАНТНО И ПРОСТО)
+- [ ] **Расширить существующие методы**: Добавить поддержку `context.ParentIds` в `ExecuteToListAsync` и `ExecuteCountAsync`
+- [ ] **Обновить логику маршрутизации** SQL вызовов:
+  ```csharp
+  // В ExecuteToListAsync добавить поддержку ParentIds:
+  if (context.MaxDepth.HasValue && (context.ParentId.HasValue || context.ParentIds?.Length > 0))
   {
-      var orderByJson = _orderingParser.ParseOrderBy<TProps>(parameters.OrderBy);
-      var facetFilters = _filterParser.ParseFilters<TProps>(parameters.Filters);
-      
-      SearchJsonResult result;
-      if (batchInfo.MaxDepth > 1)
-      {
-          // Вызов перегрузки для descendants batch (массив + max_depth)
-          var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}, {7}) as result";
-          result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-              batchInfo.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, 
-              batchInfo.CheckPermissions, orderByJson ?? "null", 
-              batchInfo.ParentIds, batchInfo.MaxDepth).FirstOrDefaultAsync();
-      }
-      else
-      {
-          // Вызов перегрузки для children batch (только массив)
-          var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}, {7}) as result";
-          result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-              batchInfo.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, 
-              batchInfo.CheckPermissions, orderByJson ?? "null", 
-              batchInfo.ParentIds, 1).FirstOrDefaultAsync();
-      }
-      
-      // Остальная логика обработки результата...
+      // Descendants: одиночный ИЛИ batch
+      var parentParam = context.ParentIds?.Length > 0 ? context.ParentIds : new[] { context.ParentId!.Value };
+      var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}, {7}) as result";
+      result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+          context.SchemeId, facetFilters, context.Limit ?? 100, context.Offset ?? 0,
+          context.CheckPermissions, orderByJson ?? "null", parentParam, context.MaxDepth)
+          .FirstOrDefaultAsync();
   }
-  
-  public async Task<int> ExecuteBatchCountAsync<TProps>(
-      BatchQueryInfo batchInfo,
-      QueryParameters parameters) where TProps : class, new()
+  else if (context.ParentId.HasValue || context.ParentIds?.Length > 0)
   {
-      // Аналогичная логика для подсчета
+      // Children: одиночный ИЛИ batch
+      var parentParam = context.ParentIds?.Length > 0 ? context.ParentIds : new[] { context.ParentId!.Value };
+      var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}) as result";
+      result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql,
+          context.SchemeId, facetFilters, context.Limit ?? 100, context.Offset ?? 0,
+          context.CheckPermissions, orderByJson ?? "null", parentParam)
+          .FirstOrDefaultAsync();
   }
+  // ... остальная логика
   ```
 
-### 4. Создание специализированных Query классов
-- [ ] Добавить в `PostgresQueryProvider` специальные классы для batch операций:
+### 4. Использование существующего RedbQueryable (НИКАКИХ НОВЫХ КЛАССОВ!)
+- [ ] **✅ Нет нужды в новых классах**: Используем существующий `RedbQueryable<TProps>`
+- [ ] **Просто создавать QueryContext с ParentIds**:
   ```csharp
-  // Специальный Queryable для batch операций (не наследует от RedbQueryable)
-  private class BatchRedbQueryable<TProps> : IRedbQueryable<TProps> where TProps : class, new()
-  {
-      private readonly PostgresQueryProvider _provider;
-      private readonly BatchQueryInfo _batchInfo;
-      // Используем существующие парсеры
-      
-      public async Task<List<TProps>> ToListAsync() =>
-          await _provider.ExecuteBatchToListAsync<TProps>(_batchInfo, GetParameters(), CancellationToken.None);
-          
-      public async Task<int> CountAsync() =>
-          await _provider.ExecuteBatchCountAsync<TProps>(_batchInfo, GetParameters());
-      
-      // Остальные LINQ методы Where, OrderBy, Skip, Take...
-  }
-  
-  // Фабричные методы в PostgresQueryProvider:
+  // Фабричные методы в PostgresQueryProvider (ПРОСТЫЕ):
   public IRedbQueryable<TProps> CreateChildrenBatchQuery<TProps>(long schemeId, long[] parentIds, long? userId = null, bool checkPermissions = false) 
       where TProps : class, new()
   {
-      var batchInfo = new BatchQueryInfo 
-      { 
-          SchemeId = schemeId, 
-          ParentIds = parentIds, 
-          MaxDepth = 1, 
-          UserId = userId, 
-          CheckPermissions = checkPermissions 
+      var context = new QueryContext<TProps>(schemeId, userId, checkPermissions)
+      {
+          ParentIds = parentIds  // Единственное отличие!
       };
-      return new BatchRedbQueryable<TProps>(_provider: this, _batchInfo: batchInfo, _filterParser, _orderingParser);
+      return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
   }
       
   public IRedbQueryable<TProps> CreateDescendantsBatchQuery<TProps>(long schemeId, long[] parentIds, int maxDepth, long? userId = null, bool checkPermissions = false)
       where TProps : class, new()
   {
-      var batchInfo = new BatchQueryInfo 
-      { 
-          SchemeId = schemeId, 
-          ParentIds = parentIds, 
-          MaxDepth = maxDepth, 
-          UserId = userId, 
-          CheckPermissions = checkPermissions 
+      var context = new QueryContext<TProps>(schemeId, userId, checkPermissions)
+      {
+          ParentIds = parentIds,  // Batch массив
+          MaxDepth = maxDepth     // Глубина рекурсии
       };
-      return new BatchRedbQueryable<TProps>(_provider: this, _batchInfo: batchInfo, _filterParser, _orderingParser);
+      return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
   }
   ```
+- [ ] **Все остальное работает автоматически**: Where, OrderBy, Skip, Take, ToListAsync, CountAsync
 
 ### 5. Реализация в PostgresQueryableProvider
 - [ ] В `redb.Core.Postgres/Providers/PostgresQueryableProvider.cs` добавить методы:
@@ -252,6 +210,29 @@
       var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth;
       var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
       return queryProvider.CreateDescendantsBatchQuery<TProps>(schemeId, parentIds, actualMaxDepth, userId, checkPermissions);
+  }
+  
+  // Реализация публичных методов:
+  public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
+  {
+      if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+      var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+      if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+      
+      var schemeId = await GetSchemeIdAsync<TProps>();
+      var currentUser = _securityContext.GetCurrentUser();
+      return QueryChildrenBatchPrivate<TProps>(schemeId, parentIds, currentUser?.Id, _configuration.AutoCheckPermissions);
+  }
+  
+  public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
+  {
+      if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
+      var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+      if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+      
+      var schemeId = await GetSchemeIdAsync<TProps>();
+      var currentUser = _securityContext.GetCurrentUser();
+      return QueryDescendantsBatchPrivate<TProps>(schemeId, parentIds, maxDepth, currentUser?.Id, _configuration.AutoCheckPermissions);
   }
   ```
 
@@ -331,14 +312,15 @@
 - Консистентные исключения (`ArgumentNullException`, схема не найдена)
 - Те же комментарии и документация
 
-### 🏗️ **SQL архитектура (PostgreSQL overloading):**
-- **Приватная функция**: `_search_objects_with_facets_internal` с универсальной логикой (`parent_ids bigint[]`)
-- **Две публичные перегрузки**:
-  1. `search_objects_with_facets(..., parent_id bigint, max_depth)` - тонкая обертка для одиночных операций
-  2. `search_objects_with_facets(..., parent_ids bigint[], max_depth)` - тонкая обертка для batch операций
+### 🏗️ **SQL архитектура (МОДУЛЬНАЯ + PostgreSQL overloading):**
+- **✅ Модульная база**: `_build_facet_conditions`, `_build_order_conditions`, `_build_search_result`
+- **✅ Существующие перегрузки**: базовая (6), children (7), descendants (8)
+- **Добавить batch перегрузки**:
+  1. `search_objects_with_facets(..., parent_ids bigint[])` - children batch (7 параметров + массив)
+  2. `search_objects_with_facets(..., parent_ids bigint[], max_depth)` - descendants batch (8 параметров + массив)
 - **PostgreSQL автовыбор**: компилятор сам выберет нужную перегрузку по типу параметра
-- **Полная изоляция**: никаких условных IF в рантайме, каждая функция оптимизирована
-- Сохранение всей логики фильтрации и форматов возврата
+- **Модули переиспользуются**: никакого дублирования кода, элегантность
+- **Полная изоляция**: каждая функция делает одну вещь идеально
 
 ### ⚙️ **Обработка входных данных:**
 - **Валидация коллекции:**
@@ -360,19 +342,19 @@
 - Паттерн: `var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth`
 - NULL защищает от бесконечных циклов в рекурсивном CTE
 
-## Примечания
+## Примечания (МОДУЛЬНАЯ АРХИТЕКТУРА)
+- **✅ Модульная база готова**: `_build_facet_conditions`, `_build_order_conditions`, `_build_search_result`
 - **Критично**: Один SQL запрос с `parent_ids bigint[]` вместо N отдельных вызовов
-- **Архитектурное превосходство**: PostgreSQL function overloading обеспечивает:
-  - 🎯 **Чистый API**: каждая функция делает одну вещь идеально
-  - ⚡ **Максимальная производительность**: никаких условных проверок в рантайме
-  - 🚫 **Никаких взаимоисключающих параметров**: PostgreSQL сам выберет нужную перегрузку
-  - 🧹 **Чистый C# код**: четкое разделение логики без сложных условий
-- **Полная изоляция**: существующие структуры (`QueryContext`, `RedbQueryable`) остаются НЕТРОНУТЫМИ
-- **Специализированные классы**: `BatchQueryInfo` и `BatchRedbQueryable` для batch операций
+- **Архитектурное превосходство**: Модульная архитектура + PostgreSQL overloading:
+  - 🎯 **Переиспользование модулей**: никакого дублирования кода
+  - ⚡ **Максимальная производительность**: каждая перегрузка оптимизирована
+  - 🚫 **Чистая архитектура**: PostgreSQL сам выберет нужную функцию по параметрам
+  - 🧹 **Элегантный C# код**: просто добавить `ParentIds` в `QueryContext`
+- **Минимальные изменения**: существующие структуры почти НЕ ТРОНУТЫ
+- **Никаких новых классов**: используем существующий `RedbQueryable<TProps>`
+- **Простота реализации**: модульная архитектура значительно упростила задачу
 - Сохранить полную обратную совместимость
-- Использовать тот же стиль кода и комментарии, что и в существующих методах
-- Следовать паттерну максимальной консистентности
-- **Рефакторинг как инвестиция**: один раз правильно, на годы вперед
+- **Инвестиция окупилась**: модульная архитектура сделала batch версии тривиальными
 
 ## Результат
 После выполнения можно будет использовать:
@@ -408,21 +390,22 @@ var allEmployeesPage = await service.QueryChildrenAsync<Employee>(companiesBatch
     .ToListAsync();
 ```
 
-### 🚀 **Преимущества архитектурного подхода:**
-- **🎯 Идеальный API дизайн**: каждая функция имеет четкую единственную ответственность
+### 🚀 **Преимущества модульной архитектуры + batch:**
+- **🎯 Модульное совершенство**: переиспользование `_build_*` модулей без дублирования
 - **⚡ Максимальная производительность**: 
   - PostgreSQL автоматически выбирает оптимальную перегрузку
-  - Никаких лишних условных проверок в рантайме
+  - Модули обеспечивают консистентную логику
   - 1 SQL запрос вместо N отдельных вызовов
-- **🧹 Чистота кода**:
-  - Полная изоляция: существующий код НЕТРОНУТ
-  - Никаких взаимоисключающих параметров
-  - Специализированные классы для специализированных задач
+- **🧹 Элегантная простота**:
+  - Минимальные изменения: добавить `ParentIds` в `QueryContext`
+  - Никаких новых классов: используем существующий `RedbQueryable<TProps>`
+  - Существующие методы автоматически поддержат batch режим
 - **🔧 Техническое превосходство**:
-  - Полная LINQ поддержка (фильтрация, сортировка, пагинация)
-  - Интеграция с системой прав пользователей
-  - Полиморфный поиск по схеме типа
+  - Полная LINQ поддержка автоматически работает для batch
+  - Интеграция с системой прав пользователей сохранена
+  - Полиморфный поиск по схеме типа работает из коробки
 - **📈 Долгосрочная ценность**:
-  - Легкая расширяемость (добавить новые перегрузки)
-  - Максимальная консистентность с существующими паттернами
-  - Инвестиция в качество архитектуры
+  - **Инвестиция окупилась**: модульная архитектура сделала batch тривиальным
+  - Легкая расширяемость через новые модули
+  - Максимальная консистентность и качество кода
+  - **Доказательство правильности решения**: сложная задача стала простой

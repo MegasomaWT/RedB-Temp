@@ -12,6 +12,7 @@ public class QueryContext<TProps> where TProps : class, new()
     public long? UserId { get; init; }
     public bool CheckPermissions { get; init; }
     public long? ParentId { get; init; }
+    public long[]? ParentIds { get; set; } // Для batch операций
     public int? MaxDepth { get; init; }
     
     public FilterExpression? Filter { get; set; }
@@ -36,6 +37,7 @@ public class QueryContext<TProps> where TProps : class, new()
     {
         return new QueryContext<TProps>(SchemeId, UserId, CheckPermissions, ParentId, MaxDepth)
         {
+            ParentIds = ParentIds, // Копируем batch массив
             Filter = Filter,
             Orderings = new List<OrderingExpression>(Orderings),
             Limit = Limit,
