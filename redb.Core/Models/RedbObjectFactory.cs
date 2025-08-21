@@ -73,7 +73,7 @@ namespace redb.Core.Models
         /// Создать новый объект без инициализации свойств
         /// Автоматически определяет схему по типу TProps
         /// </summary>
-        public static async Task<IRedbObject<TProps>> CreateAsync<TProps>() where TProps : class, new()
+        public static async Task<RedbObject<TProps>> CreateAsync<TProps>() where TProps : class, new()
         {
             return await CreateAsync(new TProps());
         }
@@ -82,7 +82,7 @@ namespace redb.Core.Models
         /// Создать новый объект с инициализированными свойствами  
         /// Автоматически определяет схему по типу TProps
         /// </summary>
-        public static async Task<IRedbObject<TProps>> CreateAsync<TProps>(TProps properties) where TProps : class, new()
+        public static async Task<RedbObject<TProps>> CreateAsync<TProps>(TProps properties) where TProps : class, new()
         {
             if (properties == null)
                 throw new ArgumentNullException(nameof(properties));
@@ -98,7 +98,7 @@ namespace redb.Core.Models
         /// <summary>
         /// Создать новый объект как дочерний для существующего родителя
         /// </summary>
-        public static async Task<IRedbObject<TProps>> CreateChildAsync<TProps>(
+        public static async Task<RedbObject<TProps>> CreateChildAsync<TProps>(
             IRedbObject parent, 
             TProps properties) where TProps : class, new()
         {
@@ -121,7 +121,7 @@ namespace redb.Core.Models
         /// Создать копию существующего объекта с новыми свойствами
         /// Сохраняет все метаданные кроме ID (для создания нового объекта)
         /// </summary>
-        public static async Task<IRedbObject<TProps>> CreateCopyAsync<TProps>(
+        public static async Task<RedbObject<TProps>> CreateCopyAsync<TProps>(
             IRedbObject<TProps> source, 
             TProps newProperties) where TProps : class, new()
         {
@@ -138,7 +138,7 @@ namespace redb.Core.Models
             redbObj.date_create = DateTime.Now;
             redbObj.date_modify = DateTime.Now;
             
-            return obj;
+            return redbObj;
         }
         
         // ===== БЫСТРЫЕ МЕТОДЫ БЕЗ ПРОВАЙДЕРА =====
@@ -147,7 +147,7 @@ namespace redb.Core.Models
         /// Создать объект без автоматической инициализации схемы (быстро)
         /// Схему нужно будет установить вручную или через провайдер
         /// </summary>
-        public static IRedbObject<TProps> CreateFast<TProps>() where TProps : class, new()
+        public static RedbObject<TProps> CreateFast<TProps>() where TProps : class, new()
         {
             return CreateFast(new TProps());
         }
@@ -155,7 +155,7 @@ namespace redb.Core.Models
         /// <summary>
         /// Создать объект с свойствами без автоматической инициализации схемы (быстро)
         /// </summary>
-        public static IRedbObject<TProps> CreateFast<TProps>(TProps properties) where TProps : class, new()
+        public static RedbObject<TProps> CreateFast<TProps>(TProps properties) where TProps : class, new()
         {
             var obj = new RedbObject<TProps>(properties);
             
@@ -175,7 +175,7 @@ namespace redb.Core.Models
         /// <summary>
         /// Создать объект с полной ручной инициализацией всех полей
         /// </summary>
-        public static IRedbObject<TProps> CreateWithMetadata<TProps>(
+        public static RedbObject<TProps> CreateWithMetadata<TProps>(
             TProps properties,
             long schemeId,
             string? name = null,
@@ -275,7 +275,7 @@ namespace redb.Core.Models
         /// Создать объект с предзагрузкой метаданных в кеш
         /// Полезно для массового создания объектов одного типа
         /// </summary>
-        public static async Task<IRedbObject<TProps>> CreateWithWarmupAsync<TProps>(TProps properties) where TProps : class, new()
+        public static async Task<RedbObject<TProps>> CreateWithWarmupAsync<TProps>(TProps properties) where TProps : class, new()
         {
             // Предзагружаем метаданные в кеш
             if (_provider is ISchemeCacheProvider cacheProvider)
@@ -290,10 +290,10 @@ namespace redb.Core.Models
         /// Массовое создание объектов с предзагрузкой кеша
         /// Оптимизировано для создания множества объектов одного типа
         /// </summary>
-        public static async Task<IRedbObject<TProps>[]> CreateBatchAsync<TProps>(params TProps[] propertiesArray) where TProps : class, new()
+        public static async Task<RedbObject<TProps>[]> CreateBatchAsync<TProps>(params TProps[] propertiesArray) where TProps : class, new()
         {
             if (propertiesArray == null || propertiesArray.Length == 0)
-                return Array.Empty<IRedbObject<TProps>>();
+                return Array.Empty<RedbObject<TProps>>();
             
             // Предзагружаем кеш один раз для всех объектов
             if (_provider is ISchemeCacheProvider cacheProvider)
@@ -301,11 +301,41 @@ namespace redb.Core.Models
                 await cacheProvider.WarmupCacheAsync<TProps>();
             }
             
-            var results = new IRedbObject<TProps>[propertiesArray.Length];
+            var results = new RedbObject<TProps>[propertiesArray.Length];
             
             for (int i = 0; i < propertiesArray.Length; i++)
             {
                 results[i] = await CreateAsync(propertiesArray[i]);
+            }
+            
+            return results;
+        }
+        
+        /// <summary>
+        /// Массовое создание дочерних объектов с предзагрузкой кеша
+        /// Все созданные объекты будут дочерними к указанному родителю
+        /// Оптимизировано для создания множества дочерних объектов одного типа
+        /// </summary>
+        public static async Task<RedbObject<TProps>[]> CreateBatchChildAsync<TProps>(
+            IRedbObject parent, 
+            params TProps[] propertiesArray) where TProps : class, new()
+        {
+            if (parent == null)
+                throw new ArgumentNullException(nameof(parent));
+            if (propertiesArray == null || propertiesArray.Length == 0)
+                return Array.Empty<RedbObject<TProps>>();
+            
+            // Предзагружаем кеш один раз для всех объектов
+            if (_provider is ISchemeCacheProvider cacheProvider)
+            {
+                await cacheProvider.WarmupCacheAsync<TProps>();
+            }
+            
+            var results = new RedbObject<TProps>[propertiesArray.Length];
+            
+            for (int i = 0; i < propertiesArray.Length; i++)
+            {
+                results[i] = await CreateChildAsync(parent, propertiesArray[i]);
             }
             
             return results;

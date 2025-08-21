@@ -30,6 +30,8 @@ namespace redb.Core.Models.Entities
         // Свойства объекта (секция properties)
         public TProps properties { get; set; } = new TProps();
 
+        // Удобный доступ
+        public TProps Pr => properties;
 
         // Пересчитать MD5-хеш по значениям properties и записать в поле hash
         public override void RecomputeHash()

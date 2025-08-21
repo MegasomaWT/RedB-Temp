@@ -203,6 +203,9 @@ namespace redb.Core.Models.Entities
         /// </summary>
         public TProps properties { get; set; } = new TProps();
 
+        // Удобный доступ
+        public TProps Pr => properties;
+
         /// <summary>
         /// Типизированная ссылка на родительский объект
         /// </summary>
