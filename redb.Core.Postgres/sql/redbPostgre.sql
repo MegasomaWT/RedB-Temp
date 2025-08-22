@@ -1151,34 +1151,108 @@ BEGIN
         RETURN format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)) OR (ft._db_type = ''DateTime'' AND fv._DateTime::text IN (%s)))',
             in_values_list, in_values_list, in_values_list, in_values_list, in_values_list);
     
-    ELSE
-        -- Простое равенство - определяем тип по формату
-        IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
-            -- DateTime формат
-            RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', operator_value);
+    -- Оператор NOT EQUAL - требует специальной обработки
+    ELSIF operator_name = '$ne' THEN
+        -- Для $ne конкретное значение строим позитивное условие для отрицания через NOT EXISTS
+        -- Для $ne null это особый случай - ищем существующие записи (в EAV null = нет записи)
+        IF operator_value IS NULL OR operator_value = 'null' OR operator_value = '' THEN
+            -- $ne null означает "поле существует" (в EAV модели null значения не сохраняются)  
+            -- Это будет обработано через обычный EXISTS, а не NOT EXISTS
+            RETURN ' AND TRUE';  -- Любая существующая запись означает "не null"
         ELSE
-            -- Строковое значение
+            -- $ne конкретное значение - строим позитивное условие для отрицания через NOT EXISTS
+            IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
+                RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', operator_value);
+            ELSIF operator_value ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+                RETURN format(' AND ft._db_type = ''Guid'' AND fv._Guid = %L::uuid', operator_value);
+            ELSIF operator_value ~ '^-?\d+$' THEN
+                RETURN format(' AND ft._db_type = ''Long'' AND fv._Long = %L::bigint', operator_value);
+            ELSIF operator_value IN ('true', 'false') THEN
+                RETURN format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L::boolean', operator_value);
+            ELSE
+                RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
+            END IF;
+        END IF;
+    
+    -- Оператор проверки содержания в массиве
+    ELSIF operator_name = '$arrayContains' THEN
+        -- Ищем значение в JSONB массиве (все массивы хранятся в колонке _Array)
+        -- Используем безопасное сравнение без принудительного каста
+        RETURN format(' AND fs._is_array = true AND fv._Array IS NOT NULL AND (
+            (ft._db_type = ''String'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb))) OR
+            (ft._db_type = ''Long'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb))) OR
+            (ft._db_type = ''Double'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb))) OR  
+            (ft._db_type = ''Boolean'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb)))
+        )', operator_value, operator_value, operator_value, operator_value);
+    
+    -- Оператор проверки непустого массива
+    ELSIF operator_name = '$arrayAny' THEN
+        -- Проверяем что массив не пустой (все массивы хранятся в колонке _Array)
+        RETURN ' AND fs._is_array = true AND fv._Array IS NOT NULL AND jsonb_array_length(fv._Array::jsonb) > 0';
+    
+    -- Оператор проверки пустого массива
+    ELSIF operator_name = '$arrayEmpty' THEN
+        -- Проверяем что массив пустой или не существует
+        RETURN ' AND fs._is_array = true AND (fv._Array IS NULL OR jsonb_array_length(fv._Array::jsonb) = 0)';
+    
+    -- Операторы подсчета элементов массива
+    ELSIF operator_name = '$arrayCount' THEN
+        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) = %L::int', operator_value::int);
+    
+    ELSIF operator_name = '$arrayCountGt' THEN
+        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) > %L::int', operator_value::int);
+    
+    ELSIF operator_name = '$arrayCountGte' THEN
+        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) >= %L::int', operator_value::int);
+    
+    ELSIF operator_name = '$arrayCountLt' THEN
+        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) < %L::int', operator_value::int);
+    
+    ELSIF operator_name = '$arrayCountLte' THEN
+        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) <= %L::int', operator_value::int);
+    
+    ELSE
+        -- Простое равенство - определяем тип по формату значения
+        IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
+            -- DateTime формат (YYYY-MM-DD)
+            RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', operator_value);
+        ELSIF operator_value ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+            -- GUID формат (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
+            RETURN format(' AND ft._db_type = ''Guid'' AND fv._Guid = %L::uuid', operator_value);
+        ELSIF operator_value ~ '^-?\d+$' THEN
+            -- Числовое значение (только цифры, возможен минус)
+            RETURN format(' AND ft._db_type = ''Long'' AND fv._Long = %L::bigint', operator_value);
+        ELSIF operator_value IN ('true', 'false') THEN
+            -- Boolean значение
+            RETURN format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L::boolean', operator_value);
+        ELSE
+            -- Строковое значение (по умолчанию)
             RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
         END IF;
     END IF;
 END;
 $BODY$;
 
-COMMENT ON FUNCTION _build_inner_condition(text, text) IS 'Строит внутреннюю часть SQL условия (без EXISTS) для использования в комбинированных условиях. Поддерживает типы: Long, Double, String, DateTime (автоопределение по формату), Boolean (в IN операторе)';
+COMMENT ON FUNCTION _build_inner_condition(text, text) IS 'Строит внутреннюю часть SQL условия (без EXISTS) для использования в комбинированных условиях. Автоопределение типов по формату значения: DateTime (YYYY-MM-DD), GUID (xxxx-xxxx), Long (цифры), Boolean (true/false), String (по умолчанию). Поддерживает операторы: $gt, $gte, $lt, $lte, $ne, $in, $contains, $startsWith, $endsWith, $arrayContains, $arrayAny, $arrayEmpty, $arrayCount, $arrayCountGt, $arrayCountGte, $arrayCountLt, $arrayCountLte.';
 
 -- Универсальный модуль для создания EXISTS условий
 CREATE OR REPLACE FUNCTION _build_exists_condition(
     field_name text,
     inner_conditions text,
-    negate boolean DEFAULT false
+    negate boolean DEFAULT false,
+    for_arrays boolean DEFAULT false
 ) RETURNS text
 LANGUAGE 'plpgsql'
 IMMUTABLE
 AS $BODY$
 DECLARE
     exists_keyword text;
+    array_condition text;
 BEGIN
     exists_keyword := CASE WHEN negate THEN 'NOT EXISTS' ELSE 'EXISTS' END;
+    
+    -- Выбираем условие для массивов или обычных полей
+    array_condition := CASE WHEN for_arrays THEN 'fs._is_array = true' ELSE 'fs._is_array = false' END;
     
     RETURN format(' AND %s (
         SELECT 1 FROM _values fv 
@@ -1186,13 +1260,13 @@ BEGIN
         JOIN _types ft ON ft._id = fs._id_type
         WHERE fv._id_object = o._id 
           AND fs._name = %L 
-          AND fs._is_array = false%s
-    )', exists_keyword, field_name, inner_conditions);
+          AND %s%s
+    )', exists_keyword, field_name, array_condition, inner_conditions);
 END;
 $BODY$;
 
 -- Комментарий к универсальному модулю EXISTS
-COMMENT ON FUNCTION _build_exists_condition(text, text, boolean) IS 'Универсальный модуль для создания EXISTS/NOT EXISTS условий с базовыми JOIN. Устраняет дублирование основного паттерна поиска по _values.';
+COMMENT ON FUNCTION _build_exists_condition(text, text, boolean, boolean) IS 'Универсальный модуль для создания EXISTS/NOT EXISTS условий с базовыми JOIN. Поддерживает как обычные поля (fs._is_array = false), так и массивы (fs._is_array = true). Параметр for_arrays управляет типом поля.';
 
 -- Вспомогательная функция для построения одиночного условия
 CREATE OR REPLACE FUNCTION _build_single_condition(
@@ -1204,9 +1278,24 @@ LANGUAGE 'plpgsql'
 COST 100
 VOLATILE
 AS $BODY$
+DECLARE
+    is_array_operator boolean := false;
+    use_not_exists boolean := false;
 BEGIN
-    -- Используем новую универсальную функцию для всех операторов
-    RETURN _build_exists_condition(field_name, _build_inner_condition(operator_name, operator_value));
+    -- Определяем специальные операторы для массивов
+    is_array_operator := operator_name IN ('$arrayContains', '$arrayAny', '$arrayEmpty', '$arrayCount', '$arrayCountGt', '$arrayCountGte', '$arrayCountLt', '$arrayCountLte');
+    
+    -- Определяем когда использовать NOT EXISTS
+    -- $ne null - это особый случай: ищем существующие записи (EXISTS)
+    -- $ne конкретное_значение - ищем записи которые НЕ равны значению (NOT EXISTS)
+    use_not_exists := operator_name = '$ne' AND operator_value IS NOT NULL AND operator_value != 'null' AND operator_value != '';
+    
+    RETURN _build_exists_condition(
+        field_name, 
+        _build_inner_condition(operator_name, operator_value), 
+        use_not_exists,  -- negate = true только для $ne с конкретным значением
+        is_array_operator  -- for_arrays
+    );
 END;
 $BODY$;
 
@@ -1243,11 +1332,11 @@ BEGIN
                 END LOOP;
                 
                 -- Используем универсальную функцию
-                result_condition := result_condition || _build_exists_condition(field_name, combined_condition);
+                result_condition := result_condition || _build_exists_condition(field_name, combined_condition, false, false);
             ELSE
                 -- Простое равенство для примитивных значений
                 result_condition := result_condition || _build_exists_condition(field_name, 
-                    format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'));
+                    format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), false, false);
             END IF;
         END LOOP;
     END LOOP;
@@ -1317,7 +1406,7 @@ BEGIN
                 END LOOP;
                 
                 -- Используем универсальную функцию (убираем начальный ' AND ')
-                single_condition := _build_exists_condition(field_name, single_condition);
+                single_condition := _build_exists_condition(field_name, single_condition, false, false);
                 IF single_condition LIKE ' AND %' THEN
                     single_condition := substring(single_condition from 6);
                 END IF;
@@ -1326,21 +1415,21 @@ BEGIN
                     -- Простое равенство для примитивных значений - используем универсальную функцию
                     IF jsonb_typeof(field_values) = 'boolean' THEN
                         single_condition := _build_exists_condition(field_name,
-                            format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (field_values #>> '{}')::boolean));
+                            format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (field_values #>> '{}')::boolean), false, false);
                     ELSIF jsonb_typeof(field_values) = 'number' THEN
                         single_condition := _build_exists_condition(field_name,
                             format(' AND ((ft._db_type = ''Long'' AND fv._Long = %L) OR (ft._db_type = ''Double'' AND fv._Double = %L))',
-                                (field_values #>> '{}')::bigint, (field_values #>> '{}')::double precision));
+                                (field_values #>> '{}')::bigint, (field_values #>> '{}')::double precision), false, false);
                     ELSE
                         -- string и прочие типы (включая DateTime как строки)
                         IF (field_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
                             -- DateTime формат в строке
                             single_condition := _build_exists_condition(field_name,
-                                format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', field_values #>> '{}'));
+                                format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', field_values #>> '{}'), false, false);
                         ELSE
                             -- Обычная строка
                             single_condition := _build_exists_condition(field_name,
-                                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'));
+                                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), false, false);
                         END IF;
                     END IF;
                     
@@ -1390,11 +1479,11 @@ BEGIN
             END LOOP;
             
             -- Используем универсальную функцию с NOT EXISTS
-            result_condition := result_condition || _build_exists_condition(field_name, positive_condition, true);
+            result_condition := result_condition || _build_exists_condition(field_name, positive_condition, true, false);
         ELSE
             -- Простое равенство для примитивных значений - инвертируем
             result_condition := result_condition || _build_exists_condition(field_name,
-                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), true);
+                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), true, false);
         END IF;
     END LOOP;
     
@@ -1490,30 +1579,54 @@ BEGIN
                         FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(filter_values) LOOP
                             combined_condition := combined_condition || _build_inner_condition(operator_key, operator_value);
                         END LOOP;
-                        where_conditions := where_conditions || _build_exists_condition(filter_key, combined_condition);
-                    END IF;
+                        where_conditions := where_conditions || _build_exists_condition(filter_key, combined_condition, false, false);
                 END IF;
-            -- Обработка простых значений (равенство)
-            ELSIF jsonb_typeof(filter_values) IN ('string', 'number', 'boolean') THEN
+                END IF;
+            -- Обработка простых значений (равенство) и NULL
+            ELSIF jsonb_typeof(filter_values) IN ('string', 'number', 'boolean', 'null') THEN
                 -- Определяем тип значения и используем универсальную функцию
                 IF jsonb_typeof(filter_values) = 'boolean' THEN
                     where_conditions := where_conditions || _build_exists_condition(filter_key,
-                        format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (filter_values #>> '{}')::boolean));
+                        format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (filter_values #>> '{}')::boolean), false, false);
                 ELSIF jsonb_typeof(filter_values) = 'number' THEN
                     where_conditions := where_conditions || _build_exists_condition(filter_key,
                         format(' AND ((ft._db_type = ''Long'' AND fv._Long = %L) OR (ft._db_type = ''Double'' AND fv._Double = %L))',
-                            (filter_values #>> '{}')::bigint, (filter_values #>> '{}')::double precision));
+                            (filter_values #>> '{}')::bigint, (filter_values #>> '{}')::double precision), false, false);
                 ELSIF jsonb_typeof(filter_values) = 'string' THEN
                     -- Проверяем формат для определения типа
-                    IF (filter_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
+                    IF (filter_values #>> '{}') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+                        -- GUID формат (проверяем ПЕРЕД DateTime)
+                        where_conditions := where_conditions || _build_exists_condition(filter_key,
+                            format(' AND ft._db_type = ''Guid'' AND fv._Guid = %L::uuid', filter_values #>> '{}'), false, false);
+                    ELSIF (filter_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
                         -- DateTime формат
                         where_conditions := where_conditions || _build_exists_condition(filter_key,
-                            format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', filter_values #>> '{}'));
+                            format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', filter_values #>> '{}'), false, false);
                     ELSE
                         -- Обычная строка
                         where_conditions := where_conditions || _build_exists_condition(filter_key,
-                            format(' AND ft._db_type = ''String'' AND fv._String = %L', filter_values #>> '{}'));
+                            format(' AND ft._db_type = ''String'' AND fv._String = %L', filter_values #>> '{}'), false, false);
                     END IF;
+                ELSIF jsonb_typeof(filter_values) = 'null' THEN
+                    -- NULL значение - ищем записи где поле не существует или равно NULL
+                    where_conditions := where_conditions || format(
+                        ' AND NOT EXISTS (
+                            SELECT 1 FROM _values fv 
+                            JOIN _structures fs ON fs._id = fv._id_structure 
+                            JOIN _types ft ON ft._id = fs._id_type
+                            WHERE fv._id_object = o._id 
+                              AND fs._name = %L 
+                              AND fs._is_array = false
+                              AND (
+                                (ft._db_type = ''String'' AND fv._String IS NOT NULL) OR
+                                (ft._db_type = ''Long'' AND fv._Long IS NOT NULL) OR
+                                (ft._db_type = ''Double'' AND fv._Double IS NOT NULL) OR
+                                (ft._db_type = ''DateTime'' AND fv._DateTime IS NOT NULL) OR
+                                (ft._db_type = ''Boolean'' AND fv._Boolean IS NOT NULL) OR
+                                (ft._db_type = ''Guid'' AND fv._Guid IS NOT NULL) OR
+                                (ft._db_type = ''Object'' AND fv._Long IS NOT NULL)
+                              )
+                        )', filter_key);
                 END IF;
             END IF;
         END LOOP;

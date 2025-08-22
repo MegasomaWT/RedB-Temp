@@ -73,6 +73,7 @@ public class PostgresFacetFilterBuilder : IFacetFilterBuilder
             LogicalExpression logical => BuildLogicalFilter(logical),
             NullCheckExpression nullCheck => BuildNullCheckFilter(nullCheck),
             InExpression inExpr => BuildInFilter(inExpr),
+            ArrayMethodExpression arrayMethod => BuildArrayMethodFilter(arrayMethod),
             _ => throw new NotSupportedException($"Filter expression type {filter.GetType().Name} is not supported")
         };
     }
@@ -81,7 +82,58 @@ public class PostgresFacetFilterBuilder : IFacetFilterBuilder
     {
         var fieldName = comparison.Property.Name;
         var value = comparison.Value;
+        
+        // Обработка методов массивов: Tags.Count() > 2, Numbers.Any() == true
+        if (fieldName.Contains('.') && (fieldName.EndsWith(".Count()") || fieldName.EndsWith(".Any()")))
+        {
+            var parts = fieldName.Split('.');
+            var arrayProperty = parts[0];
+            var method = parts[1].TrimEnd('(', ')');
+            
+            return method switch
+            {
+                "Count" => comparison.Operator switch
+                {
+                    ComparisonOperator.Equal => new Dictionary<string, object> 
+                    { 
+                        [arrayProperty] = new Dictionary<string, object?> { ["$arrayCount"] = value } 
+                    },
+                    ComparisonOperator.GreaterThan => new Dictionary<string, object> 
+                    { 
+                        [arrayProperty] = new Dictionary<string, object?> { ["$arrayCountGt"] = value } 
+                    },
+                    ComparisonOperator.GreaterThanOrEqual => new Dictionary<string, object> 
+                    { 
+                        [arrayProperty] = new Dictionary<string, object?> { ["$arrayCountGte"] = value } 
+                    },
+                    ComparisonOperator.LessThan => new Dictionary<string, object> 
+                    { 
+                        [arrayProperty] = new Dictionary<string, object?> { ["$arrayCountLt"] = value } 
+                    },
+                    ComparisonOperator.LessThanOrEqual => new Dictionary<string, object> 
+                    { 
+                        [arrayProperty] = new Dictionary<string, object?> { ["$arrayCountLte"] = value } 
+                    },
+                    _ => throw new NotSupportedException($"Array Count operator {comparison.Operator} is not supported")
+                },
+                "Any" => comparison.Operator switch
+                {
+                    ComparisonOperator.Equal when value is bool boolValue => boolValue 
+                        ? new Dictionary<string, object> 
+                          { 
+                              [arrayProperty] = new Dictionary<string, object?> { ["$arrayAny"] = true } 
+                          }
+                        : new Dictionary<string, object> 
+                          { 
+                              [arrayProperty] = new Dictionary<string, object?> { ["$arrayEmpty"] = true } 
+                          },
+                    _ => throw new NotSupportedException($"Array Any operator {comparison.Operator} is not supported")
+                },
+                _ => throw new NotSupportedException($"Array method {method} is not supported")
+            };
+        }
 
+        // Обычные свойства
         return comparison.Operator switch
         {
             ComparisonOperator.Equal => new Dictionary<string, object> { [fieldName] = value! },
@@ -200,6 +252,28 @@ public class PostgresFacetFilterBuilder : IFacetFilterBuilder
         return new Dictionary<string, object> 
         { 
             [fieldName] = new Dictionary<string, object> { ["$in"] = inExpr.Values.ToArray() } 
+        };
+    }
+
+    /// <summary>
+    /// Создает фильтр для методов массивов (x.Tags.Contains, x.Tags.Any)
+    /// </summary>
+    private object BuildArrayMethodFilter(ArrayMethodExpression arrayExpr)
+    {
+        var fieldName = arrayExpr.ArrayProperty.Name;
+        
+        return arrayExpr.Method switch
+        {
+            ArrayMethod.Contains => new Dictionary<string, object> 
+            { 
+                [fieldName] = new Dictionary<string, object> { ["$arrayContains"] = arrayExpr.Argument! } 
+            },
+            ArrayMethod.Any => new Dictionary<string, object> 
+            { 
+                [fieldName] = new Dictionary<string, object> { ["$arrayAny"] = true }
+            },
+            ArrayMethod.Count => throw new NotImplementedException("Count method requires comparison context and will be implemented later"),
+            _ => throw new NotSupportedException($"Array method {arrayExpr.Method} is not supported")
         };
     }
 }

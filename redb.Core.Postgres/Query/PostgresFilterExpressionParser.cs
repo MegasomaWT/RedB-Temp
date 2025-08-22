@@ -127,9 +127,35 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
             };
         }
 
-        // Enumerable методы
+        // Массивы/коллекции свойств (x.Tags.Contains, x.Numbers.Any) - ПЕРВЫМ ДЕЛОМ!
+        if (method.Object != null && IsPropertyArrayAccess(method.Object))
+        {
+            return methodName switch
+            {
+                "Contains" => VisitArrayMethodCall(method, ArrayMethod.Contains),
+                "Any" when method.Arguments.Count == 0 => VisitArrayMethodCall(method, ArrayMethod.Any),
+                "Count" when method.Arguments.Count == 0 => VisitArrayMethodCall(method, ArrayMethod.Count),
+                _ => throw new NotSupportedException($"Array method {methodName} is not supported or has wrong arguments")
+            };
+        }
+
+        // Enumerable методы (Enumerable.Contains, Enumerable.Any) - проверяем аргументы!
         if (declaringType == typeof(Enumerable))
         {
+            // Для Enumerable методов источник данных в первом аргументе
+            if (method.Arguments.Count > 0 && IsPropertyArrayAccess(method.Arguments[0]))
+            {
+                // Это вызов на массиве свойства: Enumerable.Any(x.Tags) из x.Tags.Any()
+                return methodName switch
+                {
+                    "Contains" when method.Arguments.Count == 2 => VisitArrayMethodCall(method, ArrayMethod.Contains),
+                    "Any" when method.Arguments.Count == 1 => VisitArrayMethodCall(method, ArrayMethod.Any),
+                    "Count" when method.Arguments.Count == 1 => VisitArrayMethodCall(method, ArrayMethod.Count),
+                    _ => throw new NotSupportedException($"Array method {methodName} via Enumerable is not supported or has wrong arguments")
+                };
+            }
+            
+            // Обычные Enumerable методы на коллекциях-константах
             return methodName switch
             {
                 "Contains" => VisitEnumerableContains(method),
@@ -137,7 +163,7 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
             };
         }
 
-        // Коллекции (List<T>, ICollection<T>, etc.)
+        // Коллекции (List<T>, ICollection<T>, etc.) - collection.Contains(property) - ПОТОМ!
         if (methodName == "Contains" && method.Object != null)
         {
             var objectType = method.Object.Type;
@@ -242,14 +268,80 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
 
     private bool IsPropertyAccess(Expression expression)
     {
-        return expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo;
+        // Обычные свойства: x.Name
+        if (expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo)
+        {
+            return true;
+        }
+        
+        // Методы массивов свойств: x.Tags.Count(), x.Numbers.Any()
+        if (expression is MethodCallExpression method)
+        {
+            // Instance методы: x.Tags.Count() где Object = x.Tags
+            if (method.Object != null && IsPropertyArrayAccess(method.Object))
+            {
+                var methodName = method.Method.Name;
+                return methodName is "Count" or "Any" && method.Arguments.Count == 0;
+            }
+            
+            // Статические методы Enumerable: Enumerable.Count(x.Tags) где Arguments[0] = x.Tags
+            if (method.Object == null && method.Method.DeclaringType?.Name == "Enumerable")
+            {
+                var methodName = method.Method.Name;
+                if (methodName is "Count" or "Any" && method.Arguments.Count >= 1)
+                {
+                    var firstArg = method.Arguments[0];
+                    if (IsPropertyArrayAccess(firstArg))
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
     }
 
     private redb.Core.Query.QueryExpressions.PropertyInfo ExtractProperty(Expression expression)
     {
+        // Обычные свойства: x.Name
         if (expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo propInfo)
         {
             return new redb.Core.Query.QueryExpressions.PropertyInfo(propInfo.Name, propInfo.PropertyType);
+        }
+        
+        // Методы массивов свойств: x.Tags.Count(), x.Numbers.Any()
+        if (expression is MethodCallExpression method)
+        {
+            var methodName = method.Method.Name;
+            
+            // Instance методы: x.Tags.Count() где Object = x.Tags
+            if (method.Object != null && IsPropertyArrayAccess(method.Object) && 
+                methodName is "Count" or "Any" && method.Arguments.Count == 0)
+            {
+                // Извлекаем базовое свойство (x.Tags -> Tags)
+                var baseProperty = ExtractProperty(method.Object!);
+                
+                // Возвращаем PropertyInfo с специальным именем для SQL
+                var propertyName = $"{baseProperty.Name}.{methodName}()";
+                return new redb.Core.Query.QueryExpressions.PropertyInfo(propertyName, typeof(int));
+            }
+            
+            // Статические методы Enumerable: Enumerable.Count(x.Tags) где Arguments[0] = x.Tags
+            if (method.Object == null && method.Method.DeclaringType?.Name == "Enumerable" &&
+                methodName is "Count" or "Any" && method.Arguments.Count >= 1)
+            {
+                var firstArg = method.Arguments[0];
+                if (IsPropertyArrayAccess(firstArg))
+                {
+                    // Извлекаем базовое свойство (x.Tags -> Tags)
+                    var baseProperty = ExtractProperty(firstArg);
+                    
+                    // Возвращаем PropertyInfo с специальным именем для SQL
+                    var propertyName = $"{baseProperty.Name}.{methodName}()";
+                    return new redb.Core.Query.QueryExpressions.PropertyInfo(propertyName, typeof(int));
+                }
+            }
         }
 
         throw new ArgumentException($"Expression must be a property access, got {expression.GetType().Name}");
@@ -299,5 +391,73 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         {
             throw new NotSupportedException("Collection Contains argument must be a property access");
         }
+    }
+
+    /// <summary>
+    /// Проверяет, является ли выражение обращением к свойству-массиву (x.Tags, x.Numbers)
+    /// </summary>
+    private bool IsPropertyArrayAccess(Expression expression)
+    {
+        if (expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo propInfo)
+        {
+            var propType = propInfo.PropertyType;
+            
+            // Проверяем что это коллекция/массив
+            if (propType.IsGenericType)
+            {
+                var genericDef = propType.GetGenericTypeDefinition();
+                return genericDef == typeof(List<>) || 
+                       genericDef == typeof(IList<>) ||
+                       genericDef == typeof(ICollection<>) ||
+                       genericDef == typeof(IEnumerable<>) ||
+                       propType.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
+            }
+            
+            // Проверяем массивы T[]
+            return propType.IsArray;
+        }
+        
+        return false;
+    }
+
+    /// <summary>
+    /// Обрабатывает вызовы методов на массивах (x.Tags.Contains, x.Tags.Any)
+    /// Поддерживает как instance методы (x.Tags.Any()), так и Enumerable методы (Enumerable.Any(x.Tags))
+    /// </summary>
+    private FilterExpression VisitArrayMethodCall(MethodCallExpression method, ArrayMethod arrayMethod)
+    {
+        MemberExpression? propertyExpression = null;
+        object? argument = null;
+
+        if (method.Object is MemberExpression member)
+        {
+            // Instance метод: x.Tags.Contains("test")
+            propertyExpression = member;
+            
+            // Для Contains получаем аргумент
+            if (arrayMethod == ArrayMethod.Contains && method.Arguments.Count > 0)
+            {
+                argument = EvaluateExpression(method.Arguments[0]);
+            }
+        }
+        else if (method.Arguments.Count > 0 && method.Arguments[0] is MemberExpression arrayMember)
+        {
+            // Enumerable метод: Enumerable.Any(x.Tags) или Enumerable.Contains(x.Tags, "test")
+            propertyExpression = arrayMember;
+            
+            // Для Contains получаем второй аргумент
+            if (arrayMethod == ArrayMethod.Contains && method.Arguments.Count > 1)
+            {
+                argument = EvaluateExpression(method.Arguments[1]);
+            }
+        }
+
+        if (propertyExpression != null)
+        {
+            var property = ExtractProperty(propertyExpression);
+            return new ArrayMethodExpression(property, arrayMethod, argument);
+        }
+        
+        throw new NotSupportedException($"Array method {arrayMethod} requires property access (x.PropertyName.{method.Method.Name})");
     }
 }
