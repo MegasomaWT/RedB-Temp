@@ -142,8 +142,14 @@ namespace redb.Core.Postgres.Providers
 
         // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ДОЧЕРНИМИ ОБЪЕКТАМИ =====
         
-        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj) where TProps : class, new()
+        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj) where TProps : class, new()
         {
+            // LINQ принцип: null родитель → пустой результат без исключения
+            if (parentObj == null || parentObj.Id <= 0)
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
+            
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
@@ -152,8 +158,14 @@ namespace redb.Core.Postgres.Providers
             return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
         
-        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject parentObj, IRedbUser user) where TProps : class, new()
+        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj, IRedbUser user) where TProps : class, new()
         {
+            // LINQ принцип: null родитель → пустой результат без исключения
+            if (parentObj == null || parentObj.Id <= 0)
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
+            
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
@@ -161,8 +173,14 @@ namespace redb.Core.Postgres.Providers
             return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
         
-        public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject parentObj) where TProps : class, new()
+        public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject? parentObj) where TProps : class, new()
         {
+            // LINQ принцип: null родитель → пустой результат без исключения
+            if (parentObj == null || parentObj.Id <= 0)
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
+            
             var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
@@ -173,8 +191,14 @@ namespace redb.Core.Postgres.Providers
 
         // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ (РЕКУРСИВНО) =====
         
-        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
+        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new()
         {
+            // LINQ принцип: null родитель → пустой результат без исключения
+            if (parentObj == null || parentObj.Id <= 0)
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
+            
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
@@ -183,8 +207,14 @@ namespace redb.Core.Postgres.Providers
             return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
         
-        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new()
         {
+            // LINQ принцип: null родитель → пустой результат без исключения
+            if (parentObj == null || parentObj.Id <= 0)
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
+            
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
@@ -192,8 +222,14 @@ namespace redb.Core.Postgres.Providers
             return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
         
-        public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject parentObj, int? maxDepth = null) where TProps : class, new()
+        public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new()
         {
+            // LINQ принцип: null родитель → пустой результат без исключения
+            if (parentObj == null || parentObj.Id <= 0)
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
+            
             var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
