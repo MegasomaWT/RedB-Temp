@@ -1052,6 +1052,187 @@ COMMENT ON FUNCTION get_object_json(bigint, integer) IS 'Функция полу
 
 -- ===== МОДУЛИ ДЛЯ МОДУЛЬНОЙ АРХИТЕКТУРЫ =====
 
+-- Вспомогательная функция для форматирования JSON массива для оператора IN
+-- Преобразует JSONB массив в строку значений для SQL IN clause
+CREATE OR REPLACE FUNCTION _format_json_array_for_in(
+    array_data jsonb
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    in_values text := '';
+    json_element jsonb;
+    first_item boolean := true;
+    element_text text;
+BEGIN
+    -- Проверяем что это массив
+    IF jsonb_typeof(array_data) != 'array' THEN
+        RAISE EXCEPTION 'Ожидается JSON массив, получен: %', jsonb_typeof(array_data);
+    END IF;
+    
+    -- Обрабатываем каждый элемент массива
+    FOR json_element IN SELECT value FROM jsonb_array_elements(array_data) LOOP
+        IF NOT first_item THEN
+            in_values := in_values || ', ';
+        END IF;
+        first_item := false;
+        
+        -- Форматируем элемент в зависимости от типа
+        CASE jsonb_typeof(json_element)
+            WHEN 'string' THEN
+                element_text := quote_literal(json_element #>> '{}');
+            WHEN 'number' THEN
+                element_text := json_element #>> '{}';
+            WHEN 'boolean' THEN
+                element_text := CASE WHEN (json_element)::boolean THEN 'true' ELSE 'false' END;
+            ELSE
+                element_text := quote_literal(json_element #>> '{}');
+        END CASE;
+        
+        in_values := in_values || element_text;
+    END LOOP;
+    
+    RETURN in_values;
+END;
+$BODY$;
+
+COMMENT ON FUNCTION _format_json_array_for_in(jsonb) IS 'Преобразует JSONB массив в строку значений для SQL IN clause. Поддерживает string, number, boolean типы';
+
+-- Вспомогательная функция для построения числовых сравнений
+CREATE OR REPLACE FUNCTION _build_numeric_comparison(
+    field_name text,
+    operator_name text,
+    operator_value text
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    op_symbol text;
+BEGIN
+    -- Маппинг операторов
+    CASE operator_name
+        WHEN '$gt' THEN op_symbol := '>';
+        WHEN '$lt' THEN op_symbol := '<';
+        WHEN '$gte' THEN op_symbol := '>=';
+        WHEN '$lte' THEN op_symbol := '<=';
+        ELSE RAISE EXCEPTION 'Неизвестный числовой оператор: %', operator_name;
+    END CASE;
+    
+    RETURN format(
+        ' AND EXISTS (
+            SELECT 1 FROM _values fv 
+            JOIN _structures fs ON fs._id = fv._id_structure 
+            JOIN _types ft ON ft._id = fs._id_type
+            WHERE fv._id_object = o._id 
+              AND fs._name = %L 
+              AND fs._is_array = false
+              AND (
+                (ft._db_type = ''Long'' AND fv._Long %s %L) OR
+                (ft._db_type = ''Double'' AND fv._Double %s %L)
+              )
+        )',
+        field_name,
+        op_symbol,
+        operator_value::bigint,
+        op_symbol,
+        operator_value::double precision
+    );
+END;
+$BODY$;
+
+COMMENT ON FUNCTION _build_numeric_comparison(text, text, text) IS 'Строит SQL условие для числовых операторов сравнения ($gt, $lt, $gte, $lte)';
+
+-- Вспомогательная функция для построения строковых сравнений
+CREATE OR REPLACE FUNCTION _build_string_comparison(
+    field_name text,
+    operator_name text,
+    operator_value text
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    pattern text;
+BEGIN
+    -- Формирование LIKE паттерна
+    CASE operator_name
+        WHEN '$startsWith' THEN pattern := operator_value || '%';
+        WHEN '$endsWith' THEN pattern := '%' || operator_value;
+        WHEN '$contains' THEN pattern := '%' || operator_value || '%';
+        ELSE RAISE EXCEPTION 'Неизвестный строковый оператор: %', operator_name;
+    END CASE;
+    
+    RETURN format(
+        ' AND EXISTS (
+            SELECT 1 FROM _values fv 
+            JOIN _structures fs ON fs._id = fv._id_structure 
+            JOIN _types ft ON ft._id = fs._id_type
+            WHERE fv._id_object = o._id 
+              AND fs._name = %L 
+              AND fs._is_array = false
+              AND ft._db_type = ''String''
+              AND fv._String LIKE %L
+        )',
+        field_name,
+        pattern
+    );
+END;
+$BODY$;
+
+COMMENT ON FUNCTION _build_string_comparison(text, text, text) IS 'Строит SQL условие для строковых операторов ($startsWith, $endsWith, $contains)';
+
+-- Вспомогательная функция для построения части условия внутри EXISTS
+CREATE OR REPLACE FUNCTION _build_inner_condition(
+    operator_name text,
+    operator_value text
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    op_symbol text;
+    pattern text;
+    in_values_list text;
+BEGIN
+    -- Числовые операторы
+    IF operator_name IN ('$gt', '$lt', '$gte', '$lte') THEN
+        CASE operator_name
+            WHEN '$gt' THEN op_symbol := '>';
+            WHEN '$lt' THEN op_symbol := '<';
+            WHEN '$gte' THEN op_symbol := '>=';
+            WHEN '$lte' THEN op_symbol := '<=';
+        END CASE;
+        
+        RETURN format(' AND ((ft._db_type = ''Long'' AND fv._Long %s %L) OR (ft._db_type = ''Double'' AND fv._Double %s %L))',
+            op_symbol, operator_value::bigint, op_symbol, operator_value::double precision);
+    
+    -- Строковые операторы
+    ELSIF operator_name IN ('$startsWith', '$endsWith', '$contains') THEN
+        CASE operator_name
+            WHEN '$startsWith' THEN pattern := operator_value || '%';
+            WHEN '$endsWith' THEN pattern := '%' || operator_value;
+            WHEN '$contains' THEN pattern := '%' || operator_value || '%';
+        END CASE;
+        
+        RETURN format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', pattern);
+    
+    -- Оператор IN
+    ELSIF operator_name = '$in' THEN
+        in_values_list := _format_json_array_for_in(operator_value::jsonb);
+        RETURN format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)))',
+            in_values_list, in_values_list, in_values_list, in_values_list);
+    
+    ELSE
+        -- Простое равенство
+        RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
+    END IF;
+END;
+$BODY$;
+
+COMMENT ON FUNCTION _build_inner_condition(text, text) IS 'Строит внутреннюю часть SQL условия (без EXISTS) для использования в комбинированных условиях';
+
 -- Вспомогательная функция для построения одиночного условия
 CREATE OR REPLACE FUNCTION _build_single_condition(
     field_name text,
@@ -1062,195 +1243,49 @@ LANGUAGE 'plpgsql'
 COST 100
 VOLATILE
 AS $BODY$
-DECLARE
-    condition text := '';
 BEGIN
-    CASE operator_name
-        WHEN '$gt' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND (
-                        (ft._db_type = ''Long'' AND fv._Long > %L) OR
-                        (ft._db_type = ''Double'' AND fv._Double > %L)
-                      )
-                )',
-                field_name,
-                operator_value::bigint,
-                operator_value::double precision
-            );
-        WHEN '$lt' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND (
-                        (ft._db_type = ''Long'' AND fv._Long < %L) OR
-                        (ft._db_type = ''Double'' AND fv._Double < %L)
-                      )
-                )',
-                field_name,
-                operator_value::bigint,
-                operator_value::double precision
-            );
-        WHEN '$gte' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND (
-                        (ft._db_type = ''Long'' AND fv._Long >= %L) OR
-                        (ft._db_type = ''Double'' AND fv._Double >= %L)
-                      )
-                )',
-                field_name,
-                operator_value::bigint,
-                operator_value::double precision
-            );
-        WHEN '$lte' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND (
-                        (ft._db_type = ''Long'' AND fv._Long <= %L) OR
-                        (ft._db_type = ''Double'' AND fv._Double <= %L)
-                      )
-                )',
-                field_name,
-                operator_value::bigint,
-                operator_value::double precision
-            );
-        WHEN '$startsWith' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND ft._db_type = ''String''
-                      AND fv._String LIKE %L
-                )',
-                field_name,
-                operator_value || '%'
-            );
-        WHEN '$endsWith' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND ft._db_type = ''String''
-                      AND fv._String LIKE %L
-                )',
-                field_name,
-                '%' || operator_value
-            );
-        WHEN '$contains' THEN
-            condition := format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND ft._db_type = ''String''
-                      AND fv._String LIKE %L
-                )',
-                field_name,
-                '%' || operator_value || '%'
-            );
-        WHEN '$in' THEN
-            -- Для $in оператора, operator_value должно быть JSON массивом
-            DECLARE
-                in_values text := '';
-                json_array jsonb;
-                json_element jsonb;
-                first_item boolean := true;
-                element_text text;
-            BEGIN
-                -- Парсим JSON массив
-                json_array := operator_value::jsonb;
-                
-                -- Проверяем что это массив
-                IF jsonb_typeof(json_array) != 'array' THEN
-                    RAISE EXCEPTION 'Оператор $in требует JSON массив, получен: %', jsonb_typeof(json_array);
-                END IF;
-                
-                -- Создаем список значений для IN clause
-                FOR json_element IN SELECT value FROM jsonb_array_elements(json_array) LOOP
-                    IF NOT first_item THEN
-                        in_values := in_values || ', ';
-                    END IF;
-                    first_item := false;
-                    
-                    -- Определяем тип элемента и форматируем соответственно
-                    CASE jsonb_typeof(json_element)
-                        WHEN 'string' THEN
-                            element_text := quote_literal(json_element #>> '{}');
-                        WHEN 'number' THEN
-                            element_text := json_element #>> '{}';
-                        WHEN 'boolean' THEN
-                            element_text := CASE WHEN (json_element)::boolean THEN 'true' ELSE 'false' END;
-                        ELSE
-                            element_text := quote_literal(json_element #>> '{}');
-                    END CASE;
-                    
-                    in_values := in_values || element_text;
-                END LOOP;
-                
-                -- Создаем условие с IN clause для разных типов данных
-                condition := format(
-                    ' AND EXISTS (
-                        SELECT 1 FROM _values fv 
-                        JOIN _structures fs ON fs._id = fv._id_structure 
-                        JOIN _types ft ON ft._id = fs._id_type
-                        WHERE fv._id_object = o._id 
-                          AND fs._name = %L 
-                          AND fs._is_array = false
-                          AND (
-                            (ft._db_type = ''String'' AND fv._String IN (%s)) OR
-                            (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR
-                            (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR
-                            (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s))
-                          )
-                    )',
-                    field_name,
-                    in_values,
-                    in_values, 
-                    in_values,
-                    in_values
-                );
-            END;
-
-        ELSE
-            RAISE EXCEPTION 'Неподдерживаемый оператор: %', operator_name;
-    END CASE;
+    -- Числовые операторы
+    IF operator_name IN ('$gt', '$lt', '$gte', '$lte') THEN
+        RETURN _build_numeric_comparison(field_name, operator_name, operator_value);
     
-    RETURN condition;
+    -- Строковые операторы
+    ELSIF operator_name IN ('$startsWith', '$endsWith', '$contains') THEN
+        RETURN _build_string_comparison(field_name, operator_name, operator_value);
+    
+    -- Оператор IN
+    ELSIF operator_name = '$in' THEN
+        DECLARE
+            in_values_list text;
+        BEGIN
+            -- Используем вспомогательную функцию для форматирования массива
+            in_values_list := _format_json_array_for_in(operator_value::jsonb);
+            
+            RETURN format(
+                ' AND EXISTS (
+                    SELECT 1 FROM _values fv 
+                    JOIN _structures fs ON fs._id = fv._id_structure 
+                    JOIN _types ft ON ft._id = fs._id_type
+                    WHERE fv._id_object = o._id 
+                      AND fs._name = %L 
+                      AND fs._is_array = false
+                      AND (
+                        (ft._db_type = ''String'' AND fv._String IN (%s)) OR
+                        (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR
+                        (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR
+                        (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s))
+                      )
+                )',
+                field_name,
+                in_values_list,
+                in_values_list,
+                in_values_list,
+                in_values_list
+            );
+        END;
+    
+    ELSE
+        RAISE EXCEPTION 'Неподдерживаемый оператор: %', operator_name;
+    END IF;
 END;
 $BODY$;
 
@@ -1291,63 +1326,8 @@ BEGIN
                 
                 -- Добавляем все операторы для этого поля
                 FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                    CASE operator_key
-                        WHEN '$startsWith' THEN
-                            combined_condition := combined_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', operator_value || '%');
-                        WHEN '$endsWith' THEN
-                            combined_condition := combined_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value);
-                        WHEN '$contains' THEN
-                            combined_condition := combined_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value || '%');
-                        WHEN '$gt' THEN
-                            combined_condition := combined_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long > %L) OR (ft._db_type = ''Double'' AND fv._Double > %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$lt' THEN
-                            combined_condition := combined_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long < %L) OR (ft._db_type = ''Double'' AND fv._Double < %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$gte' THEN
-                            combined_condition := combined_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long >= %L) OR (ft._db_type = ''Double'' AND fv._Double >= %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$lte' THEN
-                            combined_condition := combined_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long <= %L) OR (ft._db_type = ''Double'' AND fv._Double <= %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$in' THEN
-                            -- Для $in оператора в $and условии
-                            DECLARE
-                                in_values_and text := '';
-                                json_array_and jsonb;
-                                json_element_and jsonb;
-                                first_item_and boolean := true;
-                                element_text_and text;
-                            BEGIN
-                                json_array_and := operator_value::jsonb;
-                                
-                                FOR json_element_and IN SELECT value FROM jsonb_array_elements(json_array_and) LOOP
-                                    IF NOT first_item_and THEN
-                                        in_values_and := in_values_and || ', ';
-                                    END IF;
-                                    first_item_and := false;
-                                    
-                                    CASE jsonb_typeof(json_element_and)
-                                        WHEN 'string' THEN
-                                            element_text_and := quote_literal(json_element_and #>> '{}');
-                                        WHEN 'number' THEN
-                                            element_text_and := json_element_and #>> '{}';
-                                        WHEN 'boolean' THEN
-                                            element_text_and := CASE WHEN (json_element_and)::boolean THEN 'true' ELSE 'false' END;
-                                        ELSE
-                                            element_text_and := quote_literal(json_element_and #>> '{}');
-                                    END CASE;
-                                    
-                                    in_values_and := in_values_and || element_text_and;
-                                END LOOP;
-                                
-                                combined_condition := combined_condition || format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)))',
-                                    in_values_and, in_values_and, in_values_and, in_values_and);
-                            END;
-                        ELSE
-                            -- Простое равенство
-                            combined_condition := combined_condition || format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
-                    END CASE;
+                    -- Используем вспомогательную функцию для генерации условия
+                    combined_condition := combined_condition || _build_inner_condition(operator_key, operator_value);
                 END LOOP;
                 
                 combined_condition := combined_condition || ')';
@@ -1437,63 +1417,8 @@ BEGIN
                 
                 -- Добавляем все операторы для этого поля
                 FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                    CASE operator_key
-                        WHEN '$startsWith' THEN
-                            single_condition := single_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', operator_value || '%');
-                        WHEN '$endsWith' THEN
-                            single_condition := single_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value);
-                        WHEN '$contains' THEN
-                            single_condition := single_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value || '%');
-                        WHEN '$gt' THEN
-                            single_condition := single_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long > %L) OR (ft._db_type = ''Double'' AND fv._Double > %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$lt' THEN
-                            single_condition := single_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long < %L) OR (ft._db_type = ''Double'' AND fv._Double < %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$gte' THEN
-                            single_condition := single_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long >= %L) OR (ft._db_type = ''Double'' AND fv._Double >= %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$lte' THEN
-                            single_condition := single_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long <= %L) OR (ft._db_type = ''Double'' AND fv._Double <= %L))', 
-                                operator_value::bigint, operator_value::double precision);
-                        WHEN '$in' THEN
-                            -- Для $in оператора в $or условии
-                            DECLARE
-                                in_values_or text := '';
-                                json_array_or jsonb;
-                                json_element_or jsonb;
-                                first_item_or boolean := true;
-                                element_text_or text;
-                            BEGIN
-                                json_array_or := operator_value::jsonb;
-                                
-                                FOR json_element_or IN SELECT value FROM jsonb_array_elements(json_array_or) LOOP
-                                    IF NOT first_item_or THEN
-                                        in_values_or := in_values_or || ', ';
-                                    END IF;
-                                    first_item_or := false;
-                                    
-                                    CASE jsonb_typeof(json_element_or)
-                                        WHEN 'string' THEN
-                                            element_text_or := quote_literal(json_element_or #>> '{}');
-                                        WHEN 'number' THEN
-                                            element_text_or := json_element_or #>> '{}';
-                                        WHEN 'boolean' THEN
-                                            element_text_or := CASE WHEN (json_element_or)::boolean THEN 'true' ELSE 'false' END;
-                                        ELSE
-                                            element_text_or := quote_literal(json_element_or #>> '{}');
-                                    END CASE;
-                                    
-                                    in_values_or := in_values_or || element_text_or;
-                                END LOOP;
-                                
-                                single_condition := single_condition || format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)))',
-                                    in_values_or, in_values_or, in_values_or, in_values_or);
-                            END;
-                        ELSE
-                            -- Простое равенство
-                            single_condition := single_condition || format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
-                    END CASE;
+                    -- Используем вспомогательную функцию для генерации условия
+                    single_condition := single_condition || _build_inner_condition(operator_key, operator_value);
                 END LOOP;
                 
                 single_condition := single_condition || ')';
@@ -1594,63 +1519,8 @@ BEGIN
             
             -- Добавляем все операторы для этого поля
             FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                CASE operator_key
-                    WHEN '$startsWith' THEN
-                        positive_condition := positive_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', operator_value || '%');
-                    WHEN '$endsWith' THEN
-                        positive_condition := positive_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value);
-                    WHEN '$contains' THEN
-                        positive_condition := positive_condition || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value || '%');
-                    WHEN '$gt' THEN
-                        positive_condition := positive_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long > %L) OR (ft._db_type = ''Double'' AND fv._Double > %L))', 
-                            operator_value::bigint, operator_value::double precision);
-                    WHEN '$lt' THEN
-                        positive_condition := positive_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long < %L) OR (ft._db_type = ''Double'' AND fv._Double < %L))', 
-                            operator_value::bigint, operator_value::double precision);
-                    WHEN '$gte' THEN
-                        positive_condition := positive_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long >= %L) OR (ft._db_type = ''Double'' AND fv._Double >= %L))', 
-                            operator_value::bigint, operator_value::double precision);
-                    WHEN '$lte' THEN
-                        positive_condition := positive_condition || format(' AND ((ft._db_type = ''Long'' AND fv._Long <= %L) OR (ft._db_type = ''Double'' AND fv._Double <= %L))', 
-                            operator_value::bigint, operator_value::double precision);
-                    WHEN '$in' THEN
-                        -- Для $in оператора в $not условии
-                        DECLARE
-                            in_values_not text := '';
-                            json_array_not jsonb;
-                            json_element_not jsonb;
-                            first_item_not boolean := true;
-                            element_text_not text;
-                        BEGIN
-                            json_array_not := operator_value::jsonb;
-                            
-                            FOR json_element_not IN SELECT value FROM jsonb_array_elements(json_array_not) LOOP
-                                IF NOT first_item_not THEN
-                                    in_values_not := in_values_not || ', ';
-                                END IF;
-                                first_item_not := false;
-                                
-                                CASE jsonb_typeof(json_element_not)
-                                    WHEN 'string' THEN
-                                        element_text_not := quote_literal(json_element_not #>> '{}');
-                                    WHEN 'number' THEN
-                                        element_text_not := json_element_not #>> '{}';
-                                    WHEN 'boolean' THEN
-                                        element_text_not := CASE WHEN (json_element_not)::boolean THEN 'true' ELSE 'false' END;
-                                    ELSE
-                                        element_text_not := quote_literal(json_element_not #>> '{}');
-                                END CASE;
-                                
-                                in_values_not := in_values_not || element_text_not;
-                            END LOOP;
-                            
-                            positive_condition := positive_condition || format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)))',
-                                in_values_not, in_values_not, in_values_not, in_values_not);
-                        END;
-                    ELSE
-                        -- Простое равенство
-                        positive_condition := positive_condition || format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
-                END CASE;
+                -- Используем вспомогательную функцию для генерации условия
+                positive_condition := positive_condition || _build_inner_condition(operator_key, operator_value);
             END LOOP;
             
             positive_condition := positive_condition || ')';
@@ -1767,63 +1637,8 @@ BEGIN
                         
                         -- Добавляем все операторы для этого поля
                         FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(filter_values) LOOP
-                            CASE operator_key
-                                WHEN '$startsWith' THEN
-                                    where_conditions := where_conditions || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', operator_value || '%');
-                                WHEN '$endsWith' THEN
-                                    where_conditions := where_conditions || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value);
-                                WHEN '$contains' THEN
-                                    where_conditions := where_conditions || format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', '%' || operator_value || '%');
-                                WHEN '$gt' THEN
-                                    where_conditions := where_conditions || format(' AND ((ft._db_type = ''Long'' AND fv._Long > %L) OR (ft._db_type = ''Double'' AND fv._Double > %L))', 
-                                        operator_value::bigint, operator_value::double precision);
-                                WHEN '$lt' THEN
-                                    where_conditions := where_conditions || format(' AND ((ft._db_type = ''Long'' AND fv._Long < %L) OR (ft._db_type = ''Double'' AND fv._Double < %L))', 
-                                        operator_value::bigint, operator_value::double precision);
-                                WHEN '$gte' THEN
-                                    where_conditions := where_conditions || format(' AND ((ft._db_type = ''Long'' AND fv._Long >= %L) OR (ft._db_type = ''Double'' AND fv._Double >= %L))', 
-                                        operator_value::bigint, operator_value::double precision);
-                                WHEN '$lte' THEN
-                                    where_conditions := where_conditions || format(' AND ((ft._db_type = ''Long'' AND fv._Long <= %L) OR (ft._db_type = ''Double'' AND fv._Double <= %L))', 
-                                        operator_value::bigint, operator_value::double precision);
-                                WHEN '$in' THEN
-                                    -- Для $in оператора в _build_facet_conditions
-                                    DECLARE
-                                        in_values_facet text := '';
-                                        json_array_facet jsonb;
-                                        json_element_facet jsonb;
-                                        first_item_facet boolean := true;
-                                        element_text_facet text;
-                                    BEGIN
-                                        json_array_facet := operator_value::jsonb;
-                                        
-                                        FOR json_element_facet IN SELECT value FROM jsonb_array_elements(json_array_facet) LOOP
-                                            IF NOT first_item_facet THEN
-                                                in_values_facet := in_values_facet || ', ';
-                                            END IF;
-                                            first_item_facet := false;
-                                            
-                                            CASE jsonb_typeof(json_element_facet)
-                                                WHEN 'string' THEN
-                                                    element_text_facet := quote_literal(json_element_facet #>> '{}');
-                                                WHEN 'number' THEN
-                                                    element_text_facet := json_element_facet #>> '{}';
-                                                WHEN 'boolean' THEN
-                                                    element_text_facet := CASE WHEN (json_element_facet)::boolean THEN 'true' ELSE 'false' END;
-                                                ELSE
-                                                    element_text_facet := quote_literal(json_element_facet #>> '{}');
-                                            END CASE;
-                                            
-                                            in_values_facet := in_values_facet || element_text_facet;
-                                        END LOOP;
-                                        
-                                        where_conditions := where_conditions || format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)))',
-                                            in_values_facet, in_values_facet, in_values_facet, in_values_facet);
-                                    END;
-                                ELSE
-                                    -- Простое равенство
-                                    where_conditions := where_conditions || format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
-                            END CASE;
+                            -- Используем вспомогательную функцию для генерации условия
+                            where_conditions := where_conditions || _build_inner_condition(operator_key, operator_value);
                         END LOOP;
                         
                         where_conditions := where_conditions || ')';
