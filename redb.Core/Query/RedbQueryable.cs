@@ -96,8 +96,8 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
 
     public virtual IRedbQueryable<TProps> Take(int count)
     {
-        if (count <= 0)
-            throw new ArgumentException("Take count must be positive", nameof(count));
+        if (count < 0)
+            throw new ArgumentException("Take count must be non-negative", nameof(count));
             
         var newContext = _context.Clone();
         newContext.Limit = count;

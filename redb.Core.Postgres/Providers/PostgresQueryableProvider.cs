@@ -211,7 +211,12 @@ namespace redb.Core.Postgres.Providers
         {
             if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
             var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
+            if (parentIds.Length == 0) 
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
             
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
@@ -228,7 +233,12 @@ namespace redb.Core.Postgres.Providers
         {
             if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
             var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
+            if (parentIds.Length == 0) 
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
             
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
@@ -244,7 +254,12 @@ namespace redb.Core.Postgres.Providers
         {
             if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
             var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
+            if (parentIds.Length == 0) 
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
             
             var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
             if (scheme == null)
@@ -263,7 +278,12 @@ namespace redb.Core.Postgres.Providers
         {
             if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
             var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
+            if (parentIds.Length == 0) 
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
             
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
@@ -280,7 +300,12 @@ namespace redb.Core.Postgres.Providers
         {
             if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
             var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
+            if (parentIds.Length == 0) 
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
             
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
@@ -296,7 +321,12 @@ namespace redb.Core.Postgres.Providers
         {
             if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
             var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            if (parentIds.Length == 0) throw new ArgumentException("Collection must contain at least one valid parent object", nameof(parentObjs));
+            
+            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
+            if (parentIds.Length == 0) 
+            {
+                return CreateEmptyQueryable<TProps>();
+            }
             
             var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
             if (scheme == null)
@@ -319,6 +349,16 @@ namespace redb.Core.Postgres.Providers
             var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth;
             var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
             return queryProvider.CreateDescendantsBatchQuery<TProps>(schemeId, parentIds, actualMaxDepth, userId, checkPermissions);
+        }
+        
+        /// <summary>
+        /// Создать пустой queryable для LINQ-совместимого поведения с пустыми коллекциями
+        /// </summary>
+        private IRedbQueryable<TProps> CreateEmptyQueryable<TProps>() where TProps : class, new()
+        {
+            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
+            var emptyQuery = queryProvider.CreateQuery<TProps>(0); // schemeId = 0 для пустого запроса
+            return emptyQuery.Take(0); // Limit = 0 гарантирует пустой результат без SQL запроса
         }
 
     }

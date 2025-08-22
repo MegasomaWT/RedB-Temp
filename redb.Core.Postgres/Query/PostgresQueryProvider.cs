@@ -209,6 +209,10 @@ public class PostgresQueryProvider : IRedbQueryProvider
 
     private async Task<object> ExecuteToListAsync<TProps>(QueryContext<TProps> context, Type propsType) where TProps : class, new()
     {
+        // Оптимизация: если Limit = 0, сразу возвращаем пустой список без SQL запроса
+        if (context.Limit == 0)
+            return new List<RedbObject<TProps>>();
+        
         var facetFilters = _facetBuilder.BuildFacetFilters(context.Filter);
         var parameters = _facetBuilder.BuildQueryParameters(context.Limit, context.Offset);
         var orderByJson = BuildOrderByJson(context);

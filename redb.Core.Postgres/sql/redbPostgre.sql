@@ -1099,89 +1099,8 @@ $BODY$;
 
 COMMENT ON FUNCTION _format_json_array_for_in(jsonb) IS 'Преобразует JSONB массив в строку значений для SQL IN clause. Поддерживает string, number, boolean типы';
 
--- Вспомогательная функция для построения числовых сравнений
-CREATE OR REPLACE FUNCTION _build_numeric_comparison(
-    field_name text,
-    operator_name text,
-    operator_value text
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    op_symbol text;
-BEGIN
-    -- Маппинг операторов
-    CASE operator_name
-        WHEN '$gt' THEN op_symbol := '>';
-        WHEN '$lt' THEN op_symbol := '<';
-        WHEN '$gte' THEN op_symbol := '>=';
-        WHEN '$lte' THEN op_symbol := '<=';
-        ELSE RAISE EXCEPTION 'Неизвестный числовой оператор: %', operator_name;
-    END CASE;
-    
-    RETURN format(
-        ' AND EXISTS (
-            SELECT 1 FROM _values fv 
-            JOIN _structures fs ON fs._id = fv._id_structure 
-            JOIN _types ft ON ft._id = fs._id_type
-            WHERE fv._id_object = o._id 
-              AND fs._name = %L 
-              AND fs._is_array = false
-              AND (
-                (ft._db_type = ''Long'' AND fv._Long %s %L) OR
-                (ft._db_type = ''Double'' AND fv._Double %s %L)
-              )
-        )',
-        field_name,
-        op_symbol,
-        operator_value::bigint,
-        op_symbol,
-        operator_value::double precision
-    );
-END;
-$BODY$;
-
-COMMENT ON FUNCTION _build_numeric_comparison(text, text, text) IS 'Строит SQL условие для числовых операторов сравнения ($gt, $lt, $gte, $lte)';
-
--- Вспомогательная функция для построения строковых сравнений
-CREATE OR REPLACE FUNCTION _build_string_comparison(
-    field_name text,
-    operator_name text,
-    operator_value text
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    pattern text;
-BEGIN
-    -- Формирование LIKE паттерна
-    CASE operator_name
-        WHEN '$startsWith' THEN pattern := operator_value || '%';
-        WHEN '$endsWith' THEN pattern := '%' || operator_value;
-        WHEN '$contains' THEN pattern := '%' || operator_value || '%';
-        ELSE RAISE EXCEPTION 'Неизвестный строковый оператор: %', operator_name;
-    END CASE;
-    
-    RETURN format(
-        ' AND EXISTS (
-            SELECT 1 FROM _values fv 
-            JOIN _structures fs ON fs._id = fv._id_structure 
-            JOIN _types ft ON ft._id = fs._id_type
-            WHERE fv._id_object = o._id 
-              AND fs._name = %L 
-              AND fs._is_array = false
-              AND ft._db_type = ''String''
-              AND fv._String LIKE %L
-        )',
-        field_name,
-        pattern
-    );
-END;
-$BODY$;
-
-COMMENT ON FUNCTION _build_string_comparison(text, text, text) IS 'Строит SQL условие для строковых операторов ($startsWith, $endsWith, $contains)';
+-- ⚠️ Функции _build_numeric_comparison и _build_string_comparison удалены
+-- Теперь используется _build_exists_condition + _build_inner_condition
 
 -- Вспомогательная функция для построения части условия внутри EXISTS
 CREATE OR REPLACE FUNCTION _build_inner_condition(
@@ -1196,7 +1115,7 @@ DECLARE
     pattern text;
     in_values_list text;
 BEGIN
-    -- Числовые операторы
+    -- Числовые и DateTime операторы
     IF operator_name IN ('$gt', '$lt', '$gte', '$lte') THEN
         CASE operator_name
             WHEN '$gt' THEN op_symbol := '>';
@@ -1205,8 +1124,16 @@ BEGIN
             WHEN '$lte' THEN op_symbol := '<=';
         END CASE;
         
-        RETURN format(' AND ((ft._db_type = ''Long'' AND fv._Long %s %L) OR (ft._db_type = ''Double'' AND fv._Double %s %L))',
-            op_symbol, operator_value::bigint, op_symbol, operator_value::double precision);
+        -- Пытаемся определить тип данных по формату значения
+        IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
+            -- DateTime формат (YYYY-MM-DD...)
+            RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime %s %L::timestamp',
+                op_symbol, operator_value);
+        ELSE
+            -- Числовые типы
+            RETURN format(' AND ((ft._db_type = ''Long'' AND fv._Long %s %L) OR (ft._db_type = ''Double'' AND fv._Double %s %L))',
+                op_symbol, operator_value::bigint, op_symbol, operator_value::double precision);
+        END IF;
     
     -- Строковые операторы
     ELSIF operator_name IN ('$startsWith', '$endsWith', '$contains') THEN
@@ -1221,17 +1148,51 @@ BEGIN
     -- Оператор IN
     ELSIF operator_name = '$in' THEN
         in_values_list := _format_json_array_for_in(operator_value::jsonb);
-        RETURN format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)))',
-            in_values_list, in_values_list, in_values_list, in_values_list);
+        RETURN format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)) OR (ft._db_type = ''DateTime'' AND fv._DateTime::text IN (%s)))',
+            in_values_list, in_values_list, in_values_list, in_values_list, in_values_list);
     
     ELSE
-        -- Простое равенство
-        RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
+        -- Простое равенство - определяем тип по формату
+        IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
+            -- DateTime формат
+            RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', operator_value);
+        ELSE
+            -- Строковое значение
+            RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
+        END IF;
     END IF;
 END;
 $BODY$;
 
-COMMENT ON FUNCTION _build_inner_condition(text, text) IS 'Строит внутреннюю часть SQL условия (без EXISTS) для использования в комбинированных условиях';
+COMMENT ON FUNCTION _build_inner_condition(text, text) IS 'Строит внутреннюю часть SQL условия (без EXISTS) для использования в комбинированных условиях. Поддерживает типы: Long, Double, String, DateTime (автоопределение по формату), Boolean (в IN операторе)';
+
+-- Универсальный модуль для создания EXISTS условий
+CREATE OR REPLACE FUNCTION _build_exists_condition(
+    field_name text,
+    inner_conditions text,
+    negate boolean DEFAULT false
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    exists_keyword text;
+BEGIN
+    exists_keyword := CASE WHEN negate THEN 'NOT EXISTS' ELSE 'EXISTS' END;
+    
+    RETURN format(' AND %s (
+        SELECT 1 FROM _values fv 
+        JOIN _structures fs ON fs._id = fv._id_structure 
+        JOIN _types ft ON ft._id = fs._id_type
+        WHERE fv._id_object = o._id 
+          AND fs._name = %L 
+          AND fs._is_array = false%s
+    )', exists_keyword, field_name, inner_conditions);
+END;
+$BODY$;
+
+-- Комментарий к универсальному модулю EXISTS
+COMMENT ON FUNCTION _build_exists_condition(text, text, boolean) IS 'Универсальный модуль для создания EXISTS/NOT EXISTS условий с базовыми JOIN. Устраняет дублирование основного паттерна поиска по _values.';
 
 -- Вспомогательная функция для построения одиночного условия
 CREATE OR REPLACE FUNCTION _build_single_condition(
@@ -1244,48 +1205,8 @@ COST 100
 VOLATILE
 AS $BODY$
 BEGIN
-    -- Числовые операторы
-    IF operator_name IN ('$gt', '$lt', '$gte', '$lte') THEN
-        RETURN _build_numeric_comparison(field_name, operator_name, operator_value);
-    
-    -- Строковые операторы
-    ELSIF operator_name IN ('$startsWith', '$endsWith', '$contains') THEN
-        RETURN _build_string_comparison(field_name, operator_name, operator_value);
-    
-    -- Оператор IN
-    ELSIF operator_name = '$in' THEN
-        DECLARE
-            in_values_list text;
-        BEGIN
-            -- Используем вспомогательную функцию для форматирования массива
-            in_values_list := _format_json_array_for_in(operator_value::jsonb);
-            
-            RETURN format(
-                ' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND (
-                        (ft._db_type = ''String'' AND fv._String IN (%s)) OR
-                        (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR
-                        (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR
-                        (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s))
-                      )
-                )',
-                field_name,
-                in_values_list,
-                in_values_list,
-                in_values_list,
-                in_values_list
-            );
-        END;
-    
-    ELSE
-        RAISE EXCEPTION 'Неподдерживаемый оператор: %', operator_name;
-    END IF;
+    -- Используем новую универсальную функцию для всех операторов
+    RETURN _build_exists_condition(field_name, _build_inner_condition(operator_name, operator_value));
 END;
 $BODY$;
 
@@ -1315,35 +1236,18 @@ BEGIN
         FOR field_name, field_values IN SELECT * FROM jsonb_each(sub_condition) LOOP
             -- Если это объект с операторами
             IF jsonb_typeof(field_values) = 'object' THEN
-                -- Создаем EXISTS условие для этого поля со всеми его операторами
-                combined_condition := format(' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false', field_name);
-                
-                -- Добавляем все операторы для этого поля
+                -- Собираем все условия для поля
+                combined_condition := '';
                 FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                    -- Используем вспомогательную функцию для генерации условия
                     combined_condition := combined_condition || _build_inner_condition(operator_key, operator_value);
                 END LOOP;
                 
-                combined_condition := combined_condition || ')';
-                result_condition := result_condition || combined_condition;
+                -- Используем универсальную функцию
+                result_condition := result_condition || _build_exists_condition(field_name, combined_condition);
             ELSE
                 -- Простое равенство для примитивных значений
-                result_condition := result_condition || format(' AND EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false
-                      AND ft._db_type = ''String''
-                      AND fv._String = %L
-                )', field_name, field_values #>> '{}');
+                result_condition := result_condition || _build_exists_condition(field_name, 
+                    format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'));
             END IF;
         END LOOP;
     END LOOP;
@@ -1406,74 +1310,45 @@ BEGIN
             FOR field_name, field_values IN SELECT * FROM jsonb_each(sub_condition) LOOP
                 -- Если это объект с операторами
                 IF jsonb_typeof(field_values) = 'object' THEN
-                -- Создаем EXISTS условие для этого поля со всеми его операторами
-                single_condition := format(' EXISTS (
-                    SELECT 1 FROM _values fv 
-                    JOIN _structures fs ON fs._id = fv._id_structure 
-                    JOIN _types ft ON ft._id = fs._id_type
-                    WHERE fv._id_object = o._id 
-                      AND fs._name = %L 
-                      AND fs._is_array = false', field_name);
-                
-                -- Добавляем все операторы для этого поля
+                -- Собираем все условия для поля
+                single_condition := '';
                 FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                    -- Используем вспомогательную функцию для генерации условия
                     single_condition := single_condition || _build_inner_condition(operator_key, operator_value);
                 END LOOP;
                 
-                single_condition := single_condition || ')';
-                or_parts := or_parts || single_condition;
-                ELSE
-                    -- Простое равенство для примитивных значений - обрабатываем разные типы
-                IF jsonb_typeof(field_values) = 'boolean' THEN
-                    single_condition := format(' EXISTS (
-                        SELECT 1 FROM _values fv 
-                        JOIN _structures fs ON fs._id = fv._id_structure 
-                        JOIN _types ft ON ft._id = fs._id_type
-                        WHERE fv._id_object = o._id 
-                          AND fs._name = %L 
-                          AND fs._is_array = false
-                          AND ft._db_type = ''Boolean''
-                          AND fv._Boolean = %L
-                    )', field_name, (field_values #>> '{}')::boolean);
-                ELSIF jsonb_typeof(field_values) = 'number' THEN
-                    single_condition := format(' EXISTS (
-                        SELECT 1 FROM _values fv 
-                        JOIN _structures fs ON fs._id = fv._id_structure 
-                        JOIN _types ft ON ft._id = fs._id_type
-                        WHERE fv._id_object = o._id 
-                          AND fs._name = %L 
-                          AND fs._is_array = false
-                          AND (
-                            (ft._db_type = ''Long'' AND fv._Long = %L) OR
-                            (ft._db_type = ''Double'' AND fv._Double = %L)
-                          )
-                    )', field_name, (field_values #>> '{}')::bigint, (field_values #>> '{}')::double precision);
-                ELSIF jsonb_typeof(field_values) = 'string' THEN
-                    single_condition := format(' EXISTS (
-                        SELECT 1 FROM _values fv 
-                        JOIN _structures fs ON fs._id = fv._id_structure 
-                        JOIN _types ft ON ft._id = fs._id_type
-                        WHERE fv._id_object = o._id 
-                          AND fs._name = %L 
-                          AND fs._is_array = false
-                          AND ft._db_type = ''String''
-                          AND fv._String = %L
-                    )', field_name, field_values #>> '{}');
-                ELSE
-                    -- Для прочих типов, пытаемся как строку
-                    single_condition := format(' EXISTS (
-                        SELECT 1 FROM _values fv 
-                        JOIN _structures fs ON fs._id = fv._id_structure 
-                        JOIN _types ft ON ft._id = fs._id_type
-                        WHERE fv._id_object = o._id 
-                          AND fs._name = %L 
-                          AND fs._is_array = false
-                          AND ft._db_type = ''String''
-                          AND fv._String = %L
-                    )', field_name, field_values #>> '{}');
+                -- Используем универсальную функцию (убираем начальный ' AND ')
+                single_condition := _build_exists_condition(field_name, single_condition);
+                IF single_condition LIKE ' AND %' THEN
+                    single_condition := substring(single_condition from 6);
                 END IF;
                 or_parts := or_parts || single_condition;
+                ELSE
+                    -- Простое равенство для примитивных значений - используем универсальную функцию
+                    IF jsonb_typeof(field_values) = 'boolean' THEN
+                        single_condition := _build_exists_condition(field_name,
+                            format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (field_values #>> '{}')::boolean));
+                    ELSIF jsonb_typeof(field_values) = 'number' THEN
+                        single_condition := _build_exists_condition(field_name,
+                            format(' AND ((ft._db_type = ''Long'' AND fv._Long = %L) OR (ft._db_type = ''Double'' AND fv._Double = %L))',
+                                (field_values #>> '{}')::bigint, (field_values #>> '{}')::double precision));
+                    ELSE
+                        -- string и прочие типы (включая DateTime как строки)
+                        IF (field_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
+                            -- DateTime формат в строке
+                            single_condition := _build_exists_condition(field_name,
+                                format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', field_values #>> '{}'));
+                        ELSE
+                            -- Обычная строка
+                            single_condition := _build_exists_condition(field_name,
+                                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'));
+                        END IF;
+                    END IF;
+                    
+                    -- Убираем начальный ' AND '
+                    IF single_condition LIKE ' AND %' THEN
+                        single_condition := substring(single_condition from 6);
+                    END IF;
+                    or_parts := or_parts || single_condition;
                 END IF;
             END LOOP;
         END IF;
@@ -1508,35 +1383,18 @@ BEGIN
     FOR field_name, field_values IN SELECT * FROM jsonb_each(not_condition) LOOP
         -- Если это объект с операторами
         IF jsonb_typeof(field_values) = 'object' THEN
-            -- Создаем NOT EXISTS условие для этого поля
-            positive_condition := format(' NOT EXISTS (
-                SELECT 1 FROM _values fv 
-                JOIN _structures fs ON fs._id = fv._id_structure 
-                JOIN _types ft ON ft._id = fs._id_type
-                WHERE fv._id_object = o._id 
-                  AND fs._name = %L 
-                  AND fs._is_array = false', field_name);
-            
-            -- Добавляем все операторы для этого поля
+            -- Собираем все условия для поля
+            positive_condition := '';
             FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                -- Используем вспомогательную функцию для генерации условия
                 positive_condition := positive_condition || _build_inner_condition(operator_key, operator_value);
             END LOOP;
             
-            positive_condition := positive_condition || ')';
-            result_condition := result_condition || ' AND ' || positive_condition;
+            -- Используем универсальную функцию с NOT EXISTS
+            result_condition := result_condition || _build_exists_condition(field_name, positive_condition, true);
         ELSE
             -- Простое равенство для примитивных значений - инвертируем
-            result_condition := result_condition || format(' AND NOT EXISTS (
-                SELECT 1 FROM _values fv 
-                JOIN _structures fs ON fs._id = fv._id_structure 
-                JOIN _types ft ON ft._id = fs._id_type
-                WHERE fv._id_object = o._id 
-                  AND fs._name = %L 
-                  AND fs._is_array = false
-                  AND ft._db_type = ''String''
-                  AND fv._String = %L
-            )', field_name, field_values #>> '{}');
+            result_condition := result_condition || _build_exists_condition(field_name,
+                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), true);
         END IF;
     END LOOP;
     
@@ -1558,6 +1416,7 @@ DECLARE
     where_conditions text := '';
     operator_key text;
     operator_value text;
+    combined_condition text;
     i integer;
     sub_condition jsonb;
 BEGIN
@@ -1626,75 +1485,35 @@ BEGIN
                             where_conditions := where_conditions || _build_single_condition(filter_key, operator_key, operator_value);
                         END LOOP;
                     ELSE
-                        -- Множественные операторы на одном поле - создаем один EXISTS
-                        where_conditions := where_conditions || format(' AND EXISTS (
-                            SELECT 1 FROM _values fv 
-                            JOIN _structures fs ON fs._id = fv._id_structure 
-                            JOIN _types ft ON ft._id = fs._id_type
-                            WHERE fv._id_object = o._id 
-                              AND fs._name = %L 
-                              AND fs._is_array = false', filter_key);
-                        
-                        -- Добавляем все операторы для этого поля
+                        -- Множественные операторы на одном поле - используем универсальную функцию
+                        combined_condition := '';
                         FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(filter_values) LOOP
-                            -- Используем вспомогательную функцию для генерации условия
-                            where_conditions := where_conditions || _build_inner_condition(operator_key, operator_value);
+                            combined_condition := combined_condition || _build_inner_condition(operator_key, operator_value);
                         END LOOP;
-                        
-                        where_conditions := where_conditions || ')';
+                        where_conditions := where_conditions || _build_exists_condition(filter_key, combined_condition);
                     END IF;
                 END IF;
             -- Обработка простых значений (равенство)
             ELSIF jsonb_typeof(filter_values) IN ('string', 'number', 'boolean') THEN
-                -- Определяем тип значения и создаем соответствующее условие
+                -- Определяем тип значения и используем универсальную функцию
                 IF jsonb_typeof(filter_values) = 'boolean' THEN
-                    where_conditions := where_conditions || format(
-                        ' AND EXISTS (
-                            SELECT 1 FROM _values fv 
-                            JOIN _structures fs ON fs._id = fv._id_structure 
-                            JOIN _types ft ON ft._id = fs._id_type
-                            WHERE fv._id_object = o._id 
-                              AND fs._name = %L 
-                              AND fs._is_array = false
-                              AND ft._db_type = ''Boolean''
-                              AND fv._Boolean = %L
-                        )',
-                        filter_key,
-                        (filter_values #>> '{}')::boolean
-                    );
+                    where_conditions := where_conditions || _build_exists_condition(filter_key,
+                        format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (filter_values #>> '{}')::boolean));
                 ELSIF jsonb_typeof(filter_values) = 'number' THEN
-                    where_conditions := where_conditions || format(
-                        ' AND EXISTS (
-                            SELECT 1 FROM _values fv 
-                            JOIN _structures fs ON fs._id = fv._id_structure 
-                            JOIN _types ft ON ft._id = fs._id_type
-                            WHERE fv._id_object = o._id 
-                              AND fs._name = %L 
-                              AND fs._is_array = false
-                              AND (
-                                (ft._db_type = ''Long'' AND fv._Long = %L) OR
-                                (ft._db_type = ''Double'' AND fv._Double = %L)
-                              )
-                        )',
-                        filter_key,
-                        (filter_values #>> '{}')::bigint,
-                        (filter_values #>> '{}')::double precision
-                    );
+                    where_conditions := where_conditions || _build_exists_condition(filter_key,
+                        format(' AND ((ft._db_type = ''Long'' AND fv._Long = %L) OR (ft._db_type = ''Double'' AND fv._Double = %L))',
+                            (filter_values #>> '{}')::bigint, (filter_values #>> '{}')::double precision));
                 ELSIF jsonb_typeof(filter_values) = 'string' THEN
-                    where_conditions := where_conditions || format(
-                        ' AND EXISTS (
-                            SELECT 1 FROM _values fv 
-                            JOIN _structures fs ON fs._id = fv._id_structure 
-                            JOIN _types ft ON ft._id = fs._id_type
-                            WHERE fv._id_object = o._id 
-                              AND fs._name = %L 
-                              AND fs._is_array = false
-                              AND ft._db_type = ''String''
-                              AND fv._String = %L
-                        )',
-                        filter_key,
-                        filter_values #>> '{}'
-                    );
+                    -- Проверяем формат для определения типа
+                    IF (filter_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
+                        -- DateTime формат
+                        where_conditions := where_conditions || _build_exists_condition(filter_key,
+                            format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', filter_values #>> '{}'));
+                    ELSE
+                        -- Обычная строка
+                        where_conditions := where_conditions || _build_exists_condition(filter_key,
+                            format(' AND ft._db_type = ''String'' AND fv._String = %L', filter_values #>> '{}'));
+                    END IF;
                 END IF;
             END IF;
         END LOOP;
@@ -1705,7 +1524,7 @@ END;
 $BODY$;
 
 -- Комментарий к модулю фасетной фильтрации
-COMMENT ON FUNCTION _build_facet_conditions(jsonb) IS 'Приватный модуль для построения WHERE условий на основе facet_filters. Поддерживает массивы, операторы сравнения ($gt, $lt, $gte, $lte), строковые операторы ($startsWith, $endsWith, $contains), логические операторы ($and, $or, $not) и простые значения равенства. Возвращает готовую строку условий для добавления к основному запросу.';
+COMMENT ON FUNCTION _build_facet_conditions(jsonb) IS 'Приватный модуль для построения WHERE условий на основе facet_filters. Поддерживает массивы, операторы сравнения ($gt, $lt, $gte, $lte), строковые операторы ($startsWith, $endsWith, $contains), логические операторы ($and, $or, $not) и простые значения равенства. Автоматически определяет типы: String, Long, Double, Boolean, DateTime (по формату). Возвращает готовую строку условий для добавления к основному запросу.';
 
 -- Модуль построения условий сортировки
 CREATE OR REPLACE FUNCTION _build_order_conditions(
@@ -1806,6 +1625,246 @@ $BODY$;
 -- Комментарий к модулю результата
 COMMENT ON FUNCTION _build_search_result(jsonb, integer, integer, integer, bigint) IS 'Приватный модуль для построения финального JSON результата поиска. Формирует стандартный ответ с объектами, метаданными пагинации и фасетами для UI.';
 
+-- Общая функция для выполнения поиска и формирования результата
+CREATE OR REPLACE FUNCTION _execute_search_and_build_result(
+    query_text text,           -- SQL запрос для объектов
+    count_query_text text,     -- SQL запрос для подсчета
+    scheme_id bigint,          -- для получения фасетов
+    limit_count integer,       -- для метаданных
+    offset_count integer       -- для метаданных
+) RETURNS jsonb
+LANGUAGE 'plpgsql'
+COST 100
+VOLATILE
+AS $BODY$
+DECLARE
+    objects_result jsonb;
+    total_count integer;
+BEGIN
+    -- Выполняем запрос для получения объектов
+    EXECUTE query_text INTO objects_result;
+    
+    -- Получаем общее количество
+    EXECUTE count_query_text INTO total_count;
+    
+    -- Используем существующий _build_search_result для формирования ответа
+    RETURN _build_search_result(
+        COALESCE(objects_result, '[]'::jsonb),
+        total_count,
+        limit_count,
+        offset_count,
+        scheme_id
+    );
+END;
+$BODY$;
+
+-- Комментарий к функции выполнения поиска
+COMMENT ON FUNCTION _execute_search_and_build_result(text, text, bigint, integer, integer) IS 'Общая функция для выполнения SQL запросов поиска и формирования стандартного результата. Инкапсулирует EXECUTE и построение JSON ответа.';
+
+-- Генерирует базовую часть WITH RECURSIVE для разных случаев
+CREATE OR REPLACE FUNCTION _build_recursive_base_case(
+    parent_ids bigint[],
+    distinct_fields text DEFAULT ''  -- дополнительные поля для DISTINCT
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    is_batch boolean;
+    base_fields text;
+BEGIN
+    -- Определяем batch режим
+    is_batch := array_length(parent_ids, 1) > 1;
+    
+    -- Формируем список полей
+    base_fields := '_id' || CASE WHEN distinct_fields != '' THEN ', ' || distinct_fields ELSE '' END || ', 0::integer as depth';
+    
+    IF is_batch THEN
+        RETURN format('SELECT unnest(%L::bigint[]) as %s
+                      WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0',
+                      parent_ids, base_fields, parent_ids, parent_ids);
+    ELSE
+        RETURN format('SELECT %s::bigint as %s WHERE %s IS NOT NULL',
+                      parent_ids[1], base_fields, parent_ids[1]);
+    END IF;
+END;
+$BODY$;
+
+-- Комментарий к функции генерации базового случая
+COMMENT ON FUNCTION _build_recursive_base_case(bigint[], text) IS 'Генерирует базовый случай (anchor) для WITH RECURSIVE CTE. Поддерживает одиночные и batch parent_ids, а также дополнительные поля для DISTINCT.';
+
+-- Генерирует основной SELECT запрос с jsonb_agg
+CREATE OR REPLACE FUNCTION _build_object_select_query(
+    scheme_id bigint,
+    where_conditions text,
+    order_conditions text,
+    limit_count integer,
+    offset_count integer,
+    distinct_mode boolean,
+    has_custom_order boolean DEFAULT false,
+    table_alias text DEFAULT 'o',
+    from_cte text DEFAULT NULL  -- имя CTE если используется рекурсия
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    query_text text;
+    from_clause text;
+    join_clause text := '';
+BEGIN
+    -- Формируем FROM часть
+    IF from_cte IS NOT NULL THEN
+        -- Используем CTE для рекурсивных запросов
+        from_clause := format('FROM %s d JOIN _objects %s ON d._id = %s._id', 
+                             from_cte, table_alias, table_alias);
+        where_conditions := format('WHERE d.depth > 0 AND %s._id_scheme = %s %s',
+                                  table_alias, scheme_id, where_conditions);
+    ELSE
+        -- Прямой запрос к таблице
+        from_clause := format('FROM _objects %s', table_alias);
+        where_conditions := format('WHERE %s._id_scheme = %s %s', 
+                                  table_alias, scheme_id, where_conditions);
+    END IF;
+    
+    IF distinct_mode THEN
+        IF has_custom_order THEN
+            -- DISTINCT + пользовательская сортировка (двухэтапный запрос)
+            query_text := format('SELECT jsonb_agg(get_object_json(sorted._id, 10))
+                FROM (
+                    SELECT distinct_sub._id FROM (
+                        SELECT DISTINCT ON (%s._hash) %s._id, %s._date_modify%s
+                        %s %s
+                        ORDER BY %s._hash, %s._date_modify DESC
+                    ) distinct_sub %s
+                    LIMIT %s OFFSET %s
+                ) sorted',
+                table_alias, table_alias, table_alias,
+                CASE WHEN from_cte IS NOT NULL THEN ', d.depth' ELSE '' END,
+                from_clause, where_conditions,
+                table_alias, table_alias, order_conditions,
+                limit_count, offset_count
+            );
+        ELSE
+            -- DISTINCT без пользовательской сортировки
+            query_text := format('SELECT jsonb_agg(get_object_json(sub._id, 10))
+                FROM (
+                    SELECT DISTINCT ON (%s._hash) %s._id, %s._date_modify
+                    %s %s
+                    ORDER BY %s._hash, %s._date_modify DESC
+                    LIMIT %s OFFSET %s
+                ) sub',
+                table_alias, table_alias, table_alias,
+                from_clause, where_conditions,
+                table_alias, table_alias,
+                limit_count, offset_count
+            );
+        END IF;
+    ELSE
+        -- Обычный запрос без DISTINCT
+        query_text := format('SELECT jsonb_agg(get_object_json(sub._id, 10))
+            FROM (
+                SELECT %s._id
+                %s %s %s
+                LIMIT %s OFFSET %s
+            ) sub',
+            CASE WHEN from_cte IS NOT NULL THEN 'd' ELSE table_alias END,
+            from_clause, where_conditions, order_conditions,
+            limit_count, offset_count
+        );
+    END IF;
+    
+    RETURN query_text;
+END;
+$BODY$;
+
+-- Комментарий к функции генерации SELECT
+COMMENT ON FUNCTION _build_object_select_query(bigint, text, text, integer, integer, boolean, boolean, text, text) IS 'Генерирует основной SELECT запрос для получения объектов. Поддерживает DISTINCT режим, пользовательскую сортировку и рекурсивные CTE.';
+
+-- Генерирует COUNT запрос
+CREATE OR REPLACE FUNCTION _build_count_query(
+    scheme_id bigint,
+    where_conditions text,
+    distinct_mode boolean DEFAULT false,
+    table_alias text DEFAULT 'o',
+    from_cte text DEFAULT NULL
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    from_clause text;
+    count_expr text;
+BEGIN
+    -- Формируем FROM часть
+    IF from_cte IS NOT NULL THEN
+        from_clause := format('FROM %s d JOIN _objects %s ON d._id = %s._id', 
+                             from_cte, table_alias, table_alias);
+        where_conditions := format('WHERE d.depth > 0 AND %s._id_scheme = %s %s',
+                                  table_alias, scheme_id, where_conditions);
+    ELSE
+        from_clause := format('FROM _objects %s', table_alias);
+        where_conditions := format('WHERE %s._id_scheme = %s %s', 
+                                  table_alias, scheme_id, where_conditions);
+    END IF;
+    
+    -- Формируем COUNT выражение
+    count_expr := CASE WHEN distinct_mode 
+                       THEN format('COUNT(DISTINCT %s._hash)', table_alias)
+                       ELSE 'COUNT(*)' 
+                  END;
+    
+    RETURN format('SELECT %s %s %s', count_expr, from_clause, where_conditions);
+END;
+$BODY$;
+
+-- Комментарий к функции генерации COUNT
+COMMENT ON FUNCTION _build_count_query(bigint, text, boolean, text, text) IS 'Генерирует COUNT запрос для подсчета общего количества объектов. Поддерживает DISTINCT режим и рекурсивные CTE.';
+
+-- Генерирует полный WITH RECURSIVE CTE
+CREATE OR REPLACE FUNCTION _build_full_recursive_cte(
+    parent_ids bigint[],
+    max_depth integer,
+    distinct_mode boolean
+) RETURNS text
+LANGUAGE 'plpgsql'
+IMMUTABLE
+AS $BODY$
+DECLARE
+    base_case text;
+    distinct_fields text;
+    recursive_fields text;
+BEGIN
+    -- Формируем поля для DISTINCT режима
+    distinct_fields := CASE WHEN distinct_mode 
+                           THEN ', NULL::varchar as _hash, NULL::timestamp as _date_modify' 
+                           ELSE '' 
+                      END;
+    
+    recursive_fields := CASE WHEN distinct_mode 
+                            THEN ', o._hash, o._date_modify' 
+                            ELSE '' 
+                       END;
+    
+    -- Генерируем базовый случай
+    base_case := _build_recursive_base_case(parent_ids, distinct_fields);
+    
+    -- Возвращаем полный CTE
+    RETURN format('WITH RECURSIVE descendants AS (
+        %s
+        UNION ALL
+        SELECT o._id%s, d.depth + 1
+        FROM _objects o
+        JOIN descendants d ON o._id_parent = d._id
+        WHERE d.depth < %s
+    )',
+    base_case, recursive_fields, max_depth);
+END;
+$BODY$;
+
+-- Комментарий к функции генерации WITH RECURSIVE
+COMMENT ON FUNCTION _build_full_recursive_cte(bigint[], integer, boolean) IS 'Генерирует полный WITH RECURSIVE CTE для рекурсивного поиска потомков. Поддерживает DISTINCT режим.';
+
 -- ===== СПЕЦИАЛИЗИРОВАННЫЕ ФУНКЦИИ =====
 
 -- Базовая функция фасетного поиска (без parent_id)
@@ -1822,93 +1881,19 @@ COST 100
 VOLATILE NOT LEAKPROOF
 AS $BODY$
 DECLARE
-    objects_result jsonb;
-    total_count integer;
     where_conditions text := _build_facet_conditions(facet_filters);
     order_conditions text := _build_order_conditions(order_by, false);
-    query_text text;
+    has_custom_order boolean := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
 BEGIN
-    -- Формируем основной запрос для получения объектов
-    IF distinct_mode THEN
-        -- DISTINCT запрос с двухэтапным подходом
-        IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' THEN
-            -- DISTINCT + пользовательская сортировка
-            query_text := format('
-                SELECT jsonb_agg(
-                    get_object_json(sorted._id, 10)
-                )
-                FROM (
-                    SELECT distinct_sub._id
-                    FROM (
-                        SELECT DISTINCT ON (o._hash) o._id, o._date_modify
-                        FROM _objects o
-                        WHERE o._id_scheme = %s %s
-                        ORDER BY o._hash, o._date_modify DESC
-                    ) distinct_sub
-                    JOIN _objects o ON o._id = distinct_sub._id %s
-                    LIMIT %s OFFSET %s
-                ) sorted',
-                scheme_id,
-                where_conditions,
-                order_conditions,
-                limit_count,
-                offset_count
-            );
-        ELSE
-            -- DISTINCT без пользовательской сортировки
-            query_text := format('
-                SELECT jsonb_agg(
-                    get_object_json(sub._id, 10)
-                )
-                FROM (
-                    SELECT DISTINCT ON (o._hash) o._id, o._date_modify
-                    FROM _objects o
-                    WHERE o._id_scheme = %s %s
-                    ORDER BY o._hash, o._date_modify DESC
-                    LIMIT %s OFFSET %s
-                ) sub',
-                scheme_id,
-                where_conditions,
-                limit_count,
-                offset_count
-            );
-        END IF;
-    ELSE
-        -- Простой запрос без DISTINCT
-        query_text := format('
-            SELECT jsonb_agg(
-                get_object_json(sub._id, 10)
-            )
-            FROM (
-                SELECT o._id
-                FROM _objects o
-                WHERE o._id_scheme = %s %s %s
-                LIMIT %s OFFSET %s
-            ) sub',
-            scheme_id,
-            where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
-        );
-    END IF;
-    
-    -- Выполняем запрос для получения объектов
-    EXECUTE query_text INTO objects_result;
-    
-    -- Получаем общее количество объектов для пагинации
-    query_text := format('
-        SELECT COUNT(*)
-        FROM _objects o
-        WHERE o._id_scheme = %s %s',
-        scheme_id,
-        where_conditions
+    -- Используем новые вспомогательные функции
+    RETURN _execute_search_and_build_result(
+        _build_object_select_query(
+            scheme_id, where_conditions, order_conditions,
+            limit_count, offset_count, distinct_mode, has_custom_order
+        ),
+        _build_count_query(scheme_id, where_conditions, distinct_mode),
+        scheme_id, limit_count, offset_count
     );
-    
-    EXECUTE query_text INTO total_count;
-    
-    -- Возвращаем финальный результат через модуль
-    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
 END;
 $BODY$;
 
@@ -1930,96 +1915,22 @@ COST 100
 VOLATILE NOT LEAKPROOF
 AS $BODY$
 DECLARE
-    objects_result jsonb;
-    total_count integer;
     where_conditions text := _build_facet_conditions(facet_filters);
     order_conditions text := _build_order_conditions(order_by, false);
-    query_text text;
+    has_custom_order boolean := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
 BEGIN
-    -- Добавляем фильтрацию по родительскому объекту
+    -- Уникальная логика: добавляем фильтр parent_id
     where_conditions := where_conditions || format(' AND o._id_parent = %s', parent_id);
     
-    -- Формируем основной запрос для получения объектов
-    IF distinct_mode THEN
-        -- DISTINCT запрос с двухэтапным подходом
-        IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' THEN
-            -- DISTINCT + пользовательская сортировка
-            query_text := format('
-                SELECT jsonb_agg(
-                    get_object_json(sorted._id, 10)
-                )
-                FROM (
-                    SELECT distinct_sub._id
-                    FROM (
-                        SELECT DISTINCT ON (o._hash) o._id, o._date_modify
-                        FROM _objects o
-                        WHERE o._id_scheme = %s %s
-                        ORDER BY o._hash, o._date_modify DESC
-                    ) distinct_sub
-                    JOIN _objects o ON o._id = distinct_sub._id %s
-                    LIMIT %s OFFSET %s
-                ) sorted',
-                scheme_id,
-                where_conditions,
-                order_conditions,
-                limit_count,
-                offset_count
-            );
-        ELSE
-            -- DISTINCT без пользовательской сортировки
-            query_text := format('
-                SELECT jsonb_agg(
-                    get_object_json(sub._id, 10)
-                )
-                FROM (
-                    SELECT DISTINCT ON (o._hash) o._id, o._date_modify
-                    FROM _objects o
-                    WHERE o._id_scheme = %s %s
-                    ORDER BY o._hash, o._date_modify DESC
-                    LIMIT %s OFFSET %s
-                ) sub',
-                scheme_id,
-                where_conditions,
-                limit_count,
-                offset_count
-            );
-        END IF;
-    ELSE
-        -- Простой запрос без DISTINCT
-        query_text := format('
-            SELECT jsonb_agg(
-                get_object_json(sub._id, 10)
-            )
-            FROM (
-                SELECT o._id
-                FROM _objects o
-                WHERE o._id_scheme = %s %s %s
-                LIMIT %s OFFSET %s
-            ) sub',
-            scheme_id,
-            where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
-        );
-    END IF;
-    
-    -- Выполняем запрос для получения объектов
-    EXECUTE query_text INTO objects_result;
-    
-    -- Получаем общее количество объектов для пагинации
-    query_text := format('
-        SELECT COUNT(*)
-        FROM _objects o
-        WHERE o._id_scheme = %s %s',
-        scheme_id,
-        where_conditions
+    -- Используем вспомогательные функции
+    RETURN _execute_search_and_build_result(
+        _build_object_select_query(
+            scheme_id, where_conditions, order_conditions,
+            limit_count, offset_count, distinct_mode, has_custom_order
+        ),
+        _build_count_query(scheme_id, where_conditions, distinct_mode),
+        scheme_id, limit_count, offset_count
     );
-    
-    EXECUTE query_text INTO total_count;
-    
-    -- Возвращаем финальный результат через модуль
-    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
 END;
 $BODY$;
 
@@ -2042,151 +1953,38 @@ COST 100
 VOLATILE NOT LEAKPROOF
 AS $BODY$
 DECLARE
-    objects_result jsonb;
-    total_count integer;
     where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text := _build_order_conditions(order_by, true); -- рекурсивный алиас
-    clean_where_conditions text;
-    query_text text;
+    order_conditions text;
+    has_custom_order boolean;
+    recursive_cte text;
 BEGIN
-    -- Убираем parent_id из фасетных условий для рекурсивного запроса
-    clean_where_conditions := replace(where_conditions, format(' AND o._id_parent = %s', parent_id), '');
-    
-    -- Формируем рекурсивный запрос для получения всех потомков
-    IF distinct_mode THEN
-        -- DISTINCT рекурсивный запрос
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                -- Базовый случай: начинаем с родительского объекта (любой схемы)
-                SELECT %s::bigint as _id, NULL::varchar as _hash, NULL::timestamp as _date_modify, 0::integer as depth
-                WHERE %s IS NOT NULL
-                
-                UNION ALL
-                
-                -- Рекурсия: обходим ВСЕ дочерние объекты, фильтруем по схеме только в результате
-                SELECT o._id, o._hash, o._date_modify, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT jsonb_agg(
-                get_object_json(sorted._id, 10)
-            )
-            FROM (
-                SELECT distinct_sub._id
-                FROM (
-                    SELECT DISTINCT ON (d._hash) d._id, d._date_modify, d.depth
-                    FROM descendants d
-                    JOIN _objects o ON d._id = o._id
-                    WHERE d.depth > 0 AND o._id_scheme = %s %s
-                    ORDER BY d._hash, d._date_modify DESC
-                ) distinct_sub %s
-                LIMIT %s OFFSET %s
-            ) sorted',
-            COALESCE(parent_id, 0),
-            parent_id,
-            max_depth,
-            scheme_id,
-            clean_where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
-        );
-    ELSE
-        -- Рекурсивный обычный запрос
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                -- Базовый случай: начинаем с родительского объекта (любой схемы)
-                SELECT %s::bigint as _id, 0::integer as depth
-                WHERE %s IS NOT NULL
-                
-                UNION ALL
-                
-                -- Рекурсия: обходим ВСЕ дочерние объекты, фильтруем по схеме только в результате
-                SELECT o._id, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT jsonb_agg(
-                get_object_json(sub._id, 10)
-            )
-            FROM (
-                SELECT d._id
-                FROM descendants d
-                JOIN _objects o ON d._id = o._id
-                WHERE d.depth > 0 AND o._id_scheme = %s %s %s
-                LIMIT %s OFFSET %s
-            ) sub',
-            COALESCE(parent_id, 0),
-            parent_id,
-            max_depth,
-            scheme_id,
-            clean_where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
+    -- Уникальная логика: оптимизация для max_depth = 1
+    IF max_depth = 1 THEN
+        RETURN search_objects_with_facets(
+            scheme_id, facet_filters, limit_count, offset_count, 
+            distinct_mode, order_by, parent_id
         );
     END IF;
     
-    -- Выполняем запрос для получения объектов
-    EXECUTE query_text INTO objects_result;
+    -- Для рекурсии используем другой алиас
+    order_conditions := _build_order_conditions(order_by, true);
+    has_custom_order := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
     
-    -- Получаем общее количество объектов для пагинации (рекурсивный подсчет)
-    IF distinct_mode THEN
-        -- Подсчет с учетом DISTINCT
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                SELECT %s::bigint as _id, NULL::varchar as _hash, 0::integer as depth
-                WHERE %s IS NOT NULL
-                
-                UNION ALL
-                
-                SELECT o._id, o._hash, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT COUNT(DISTINCT o._hash)
-            FROM descendants d
-            JOIN _objects o ON d._id = o._id
-            WHERE d.depth > 0 AND o._id_scheme = %s %s',
-            COALESCE(parent_id, 0),
-            parent_id,
-            max_depth,
-            scheme_id,
-            clean_where_conditions
-        );
-    ELSE
-        -- Обычный рекурсивный подсчет
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                SELECT %s::bigint as _id, 0::integer as depth
-                WHERE %s IS NOT NULL
-                
-                UNION ALL
-                
-                SELECT o._id, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT COUNT(*)
-            FROM descendants d
-            JOIN _objects o ON d._id = o._id
-            WHERE d.depth > 0 AND o._id_scheme = %s %s',
-            COALESCE(parent_id, 0),
-            parent_id,
-            max_depth,
-            scheme_id,
-            clean_where_conditions
-        );
-    END IF;
+    -- Генерируем WITH RECURSIVE
+    recursive_cte := _build_full_recursive_cte(ARRAY[parent_id]::bigint[], max_depth, distinct_mode);
     
-    EXECUTE query_text INTO total_count;
-    
-    -- Возвращаем финальный результат через модуль
-    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
+    -- Используем вспомогательные функции
+    RETURN _execute_search_and_build_result(
+        recursive_cte || _build_object_select_query(
+            scheme_id, where_conditions, order_conditions,
+            limit_count, offset_count, distinct_mode, has_custom_order,
+            'o', 'descendants'
+        ),
+        recursive_cte || _build_count_query(
+            scheme_id, where_conditions, distinct_mode, 'o', 'descendants'
+        ),
+        scheme_id, limit_count, offset_count
+    );
 END;
 $BODY$;
 
@@ -2210,98 +2008,24 @@ COST 100
 VOLATILE NOT LEAKPROOF
 AS $BODY$
 DECLARE
-    objects_result jsonb;
-    total_count integer;
     where_conditions text := _build_facet_conditions(facet_filters);
     order_conditions text := _build_order_conditions(order_by, false);
-    query_text text;
+    has_custom_order boolean := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
 BEGIN
-    -- Добавляем фильтрацию по МАССИВУ родительских объектов
+    -- Уникальная логика: добавляем фильтр по массиву parent_ids
     IF parent_ids IS NOT NULL AND array_length(parent_ids, 1) > 0 THEN
         where_conditions := where_conditions || format(' AND o._id_parent = ANY(%L)', parent_ids);
     END IF;
     
-    -- Формируем основной запрос для получения объектов (аналогично children функции)
-    IF distinct_mode THEN
-        -- DISTINCT запрос с двухэтапным подходом
-        IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' THEN
-            -- DISTINCT + пользовательская сортировка
-            query_text := format('
-                SELECT jsonb_agg(
-                    get_object_json(sorted._id, 10)
-                )
-                FROM (
-                    SELECT distinct_sub._id
-                    FROM (
-                        SELECT DISTINCT ON (o._hash) o._id, o._date_modify
-                        FROM _objects o
-                        WHERE o._id_scheme = %s %s
-                        ORDER BY o._hash, o._date_modify DESC
-                    ) distinct_sub
-                    JOIN _objects o ON o._id = distinct_sub._id %s
-                    LIMIT %s OFFSET %s
-                ) sorted',
-                scheme_id,
-                where_conditions,
-                order_conditions,
-                limit_count,
-                offset_count
-            );
-        ELSE
-            -- DISTINCT без пользовательской сортировки
-            query_text := format('
-                SELECT jsonb_agg(
-                    get_object_json(sub._id, 10)
-                )
-                FROM (
-                    SELECT DISTINCT ON (o._hash) o._id, o._date_modify
-                    FROM _objects o
-                    WHERE o._id_scheme = %s %s
-                    ORDER BY o._hash, o._date_modify DESC
-                    LIMIT %s OFFSET %s
-                ) sub',
-                scheme_id,
-                where_conditions,
-                limit_count,
-                offset_count
-            );
-        END IF;
-    ELSE
-        -- Обычный запрос без DISTINCT
-        query_text := format('
-            SELECT jsonb_agg(
-                get_object_json(sub._id, 10)
-            )
-            FROM (
-                SELECT o._id
-                FROM _objects o
-                WHERE o._id_scheme = %s %s %s
-                LIMIT %s OFFSET %s
-            ) sub',
-            scheme_id,
-            where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
-        );
-    END IF;
-    
-    -- Выполняем запрос для получения объектов
-    EXECUTE query_text INTO objects_result;
-    
-    -- Получаем общее количество для пагинации
-    query_text := format('
-        SELECT COUNT(*)
-        FROM _objects o
-        WHERE o._id_scheme = %s %s',
-        scheme_id,
-        where_conditions
+    -- Используем вспомогательные функции
+    RETURN _execute_search_and_build_result(
+        _build_object_select_query(
+            scheme_id, where_conditions, order_conditions,
+            limit_count, offset_count, distinct_mode, has_custom_order
+        ),
+        _build_count_query(scheme_id, where_conditions, distinct_mode),
+        scheme_id, limit_count, offset_count
     );
-    
-    EXECUTE query_text INTO total_count;
-    
-    -- Возвращаем финальный результат через модуль
-    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
 END;
 $BODY$;
 
@@ -2321,157 +2045,43 @@ COST 100
 VOLATILE NOT LEAKPROOF
 AS $BODY$
 DECLARE
-    objects_result jsonb;
-    total_count integer;
     where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text := _build_order_conditions(order_by, true); -- рекурсивный алиас
-    clean_where_conditions text;
-    query_text text;
+    order_conditions text;
+    has_custom_order boolean;
+    recursive_cte text;
 BEGIN
-    -- Убираем parent_ids из фасетных условий для рекурсивного запроса  
-    -- В batch запросах фасетные фильтры должны применяться только к результирующим объектам,
-    -- а не к условию parent_ids (которое обрабатывается в CTE через unnest)
-    clean_where_conditions := where_conditions;
-    
-    -- Формируем рекурсивный запрос для получения всех потомков из МАССИВА родителей
-    IF distinct_mode THEN
-        -- DISTINCT рекурсивный запрос
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                -- Базовый случай: начинаем с МАССИВА родительских объектов (любой схемы)
-                SELECT unnest(%L::bigint[]) as _id, NULL::varchar as _hash, NULL::timestamp as _date_modify, 0::integer as depth
-                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
-                
-                UNION ALL
-                
-                -- Рекурсия: обходим ВСЕ дочерние объекты, фильтруем по схеме только в результате
-                SELECT o._id, o._hash, o._date_modify, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT jsonb_agg(
-                get_object_json(sorted._id, 10)
-            )
-            FROM (
-                SELECT distinct_sub._id
-                FROM (
-                    SELECT DISTINCT ON (d._hash) d._id, d._date_modify, d.depth
-                    FROM descendants d
-                    JOIN _objects o ON d._id = o._id
-                    WHERE d.depth > 0 AND o._id_scheme = %s %s
-                    ORDER BY d._hash, d._date_modify DESC
-                ) distinct_sub %s
-                LIMIT %s OFFSET %s
-            ) sorted',
-            parent_ids,
-            parent_ids,
-            parent_ids,
-            max_depth,
-            scheme_id,
-            clean_where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
-        );
-    ELSE
-        -- Рекурсивный обычный запрос
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                -- Базовый случай: начинаем с МАССИВА родительских объектов (любой схемы)
-                SELECT unnest(%L::bigint[]) as _id, 0::integer as depth
-                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
-                
-                UNION ALL
-                
-                -- Рекурсия: обходим ВСЕ дочерние объекты, фильтруем по схеме только в результате
-                SELECT o._id, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT jsonb_agg(
-                get_object_json(sub._id, 10)
-            )
-            FROM (
-                SELECT d._id
-                FROM descendants d
-                JOIN _objects o ON d._id = o._id
-                WHERE d.depth > 0 AND o._id_scheme = %s %s %s
-                LIMIT %s OFFSET %s
-            ) sub',
-            parent_ids,
-            parent_ids,  
-            parent_ids,
-            max_depth,
-            scheme_id,
-            clean_where_conditions,
-            order_conditions,
-            limit_count,
-            offset_count
+    -- Уникальная логика: оптимизация для max_depth = 1
+    IF max_depth = 1 THEN
+        RETURN search_objects_with_facets(
+            scheme_id, facet_filters, limit_count, offset_count, 
+            distinct_mode, order_by, parent_ids
         );
     END IF;
     
-    -- Выполняем запрос для получения объектов
-    EXECUTE query_text INTO objects_result;
-    
-    -- Получаем общее количество потомков для пагинации
-    IF distinct_mode THEN
-        -- Подсчет с учетом DISTINCT
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                SELECT unnest(%L::bigint[]) as _id, NULL::varchar as _hash, 0::integer as depth
-                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
-                
-                UNION ALL
-                
-                SELECT o._id, o._hash, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT COUNT(DISTINCT o._hash)
-            FROM descendants d
-            JOIN _objects o ON d._id = o._id
-            WHERE d.depth > 0 AND o._id_scheme = %s %s',
-            parent_ids,
-            parent_ids,
-            parent_ids,
-            max_depth,
-            scheme_id,
-            clean_where_conditions
-        );
-    ELSE
-        -- Обычный рекурсивный подсчет
-        query_text := format('
-            WITH RECURSIVE descendants AS (
-                SELECT unnest(%L::bigint[]) as _id, 0::integer as depth
-                WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0
-                
-                UNION ALL
-                
-                SELECT o._id, d.depth + 1
-                FROM _objects o
-                JOIN descendants d ON o._id_parent = d._id
-                WHERE d.depth < %s
-            )
-            SELECT COUNT(*)
-            FROM descendants d
-            JOIN _objects o ON d._id = o._id
-            WHERE d.depth > 0 AND o._id_scheme = %s %s',
-            parent_ids,
-            parent_ids,
-            parent_ids,
-            max_depth,
-            scheme_id,
-            clean_where_conditions
-        );
+    -- Проверка массива
+    IF parent_ids IS NULL OR array_length(parent_ids, 1) = 0 THEN
+        RETURN _build_search_result('[]'::jsonb, 0, limit_count, offset_count, scheme_id);
     END IF;
     
-    EXECUTE query_text INTO total_count;
+    -- Для рекурсии используем другой алиас
+    order_conditions := _build_order_conditions(order_by, true);
+    has_custom_order := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
     
-    -- Возвращаем финальный результат через модуль
-    RETURN _build_search_result(objects_result, total_count, limit_count, offset_count, scheme_id);
+    -- Генерируем WITH RECURSIVE
+    recursive_cte := _build_full_recursive_cte(parent_ids, max_depth, distinct_mode);
+    
+    -- Используем вспомогательные функции
+    RETURN _execute_search_and_build_result(
+        recursive_cte || _build_object_select_query(
+            scheme_id, where_conditions, order_conditions,
+            limit_count, offset_count, distinct_mode, has_custom_order,
+            'o', 'descendants'
+        ),
+        recursive_cte || _build_count_query(
+            scheme_id, where_conditions, distinct_mode, 'o', 'descendants'
+        ),
+        scheme_id, limit_count, offset_count
+    );
 END;
 $BODY$;
 

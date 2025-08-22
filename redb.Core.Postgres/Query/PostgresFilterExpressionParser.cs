@@ -27,6 +27,8 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
             MethodCallExpression method => VisitMethodCallExpression(method),
             ConstantExpression constant when constant.Type == typeof(bool) => 
                 VisitConstantBooleanExpression(constant),
+            MemberExpression member when member.Type == typeof(bool) =>
+                VisitBooleanMemberExpression(member),
             _ => throw new NotSupportedException($"Expression type {expression.NodeType} is not supported")
         };
     }
@@ -88,6 +90,18 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         switch (unary.NodeType)
         {
             case ExpressionType.Not:
+                // Проверяем, это отрицание boolean свойства (!p.IsActive) или что-то другое
+                if (unary.Operand is MemberExpression member && member.Type == typeof(bool))
+                {
+                    // !p.IsActive интерпретируется как p.IsActive == false
+                    if (member.Member is System.Reflection.PropertyInfo propInfo && propInfo.PropertyType == typeof(bool))
+                    {
+                        var property = new redb.Core.Query.QueryExpressions.PropertyInfo(propInfo.Name, propInfo.PropertyType);
+                        return new ComparisonExpression(property, ComparisonOperator.Equal, false);
+                    }
+                }
+                
+                // Общий случай отрицания
                 var operand = VisitExpression(unary.Operand);
                 return new LogicalExpression(LogicalOperator.Not, new[] { operand });
 
@@ -190,6 +204,19 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         // Это может быть полезно для условий типа Where(x => true) или Where(x => false)
         var dummyProperty = new redb.Core.Query.QueryExpressions.PropertyInfo("__constant", typeof(bool));
         return new ComparisonExpression(dummyProperty, ComparisonOperator.Equal, value);
+    }
+
+    private FilterExpression VisitBooleanMemberExpression(MemberExpression member)
+    {
+        // Прямое обращение к boolean свойству: p.IsActive
+        // Интерпретируется как p.IsActive == true
+        if (member.Member is System.Reflection.PropertyInfo propInfo && propInfo.PropertyType == typeof(bool))
+        {
+            var property = new redb.Core.Query.QueryExpressions.PropertyInfo(propInfo.Name, propInfo.PropertyType);
+            return new ComparisonExpression(property, ComparisonOperator.Equal, true);
+        }
+
+        throw new ArgumentException($"Boolean member expression must be a boolean property, got {member.Member?.GetType().Name}");
     }
 
     private (redb.Core.Query.QueryExpressions.PropertyInfo Property, object? Value) ExtractPropertyAndValue(BinaryExpression binary)
