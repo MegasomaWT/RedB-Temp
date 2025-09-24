@@ -53,7 +53,7 @@ namespace redb.Core.Postgres.Providers
             // 4. ГЕНЕРАЦИЯ ID ЧЕРЕЗ АСИНХРОННЫЙ МЕТОД
             var newUserId = await _context.GetNextKeyAsync();
 
-            // 5. Создание нового пользователя
+            // 5. Создание нового пользователя с поддержкой новых полей
             var newUser = new _RUser
             {
                 Id = newUserId,
@@ -62,16 +62,32 @@ namespace redb.Core.Postgres.Providers
                 Name = request.Name,
                 Email = request.Email,
                 Phone = request.Phone,
-                Enabled = true,
-                DateRegister = DateTime.Now,
-                DateDismiss = null
+                Enabled = request.Enabled,  // Используем из запроса
+                DateRegister = request.DateRegister ?? DateTime.Now,  // Из запроса или текущая дата
+                DateDismiss = null,
+                
+                // === НОВЫЕ ПОЛЯ ===
+                Key = request.Key,
+                CodeInt = request.CodeInt,
+                CodeString = request.CodeString,
+                CodeGuid = request.CodeGuid,
+                Note = request.Note,
+                Hash = null  // Hash генерируется автоматически после сохранения
             };
 
             // 6. Сохранение в БД
             _context.Users.Add(newUser);
             await _context.SaveChangesAsync();
+            
+            // 7. Генерация Hash на основе основных данных пользователя (после сохранения)
+            if (newUser.Id > 0)
+            {
+                var hashSource = $"{newUser.Id}|{newUser.Login}|{newUser.Name}|{newUser.DateRegister:yyyyMMdd}";
+                newUser.Hash = Guid.NewGuid(); // Можно заменить на MD5 от hashSource если нужен детерминированный хеш
+                await _context.SaveChangesAsync();
+            }
 
-            // 7. Возврат созданного пользователя
+            // 8. Возврат созданного пользователя  
             return RedbUser.FromEntity(newUser);
         }
 
@@ -116,6 +132,39 @@ namespace redb.Core.Postgres.Providers
             if (request.DateDismiss.HasValue)
                 dbUser.DateDismiss = request.DateDismiss.Value;
 
+            // === ОБНОВЛЕНИЕ НОВЫХ ПОЛЕЙ ===
+            bool dataChanged = false;
+            
+            if (request.Key.HasValue)
+            {
+                dbUser.Key = request.Key.Value;
+                dataChanged = true;
+            }
+            
+            if (request.CodeInt.HasValue)
+            {
+                dbUser.CodeInt = request.CodeInt.Value;
+                dataChanged = true;
+            }
+            
+            if (request.CodeString != null)
+            {
+                dbUser.CodeString = string.IsNullOrEmpty(request.CodeString) ? null : request.CodeString;
+                dataChanged = true;
+            }
+            
+            if (request.CodeGuid.HasValue)
+            {
+                dbUser.CodeGuid = request.CodeGuid.Value;
+                dataChanged = true;
+            }
+            
+            if (request.Note != null)
+            {
+                dbUser.Note = string.IsNullOrEmpty(request.Note) ? null : request.Note;
+                dataChanged = true;
+            }
+
             // Обновляем роли если указаны
             if (request.RoleIds != null)
             {
@@ -134,6 +183,14 @@ namespace redb.Core.Postgres.Providers
                         IdRole = roleId
                     });
                 }
+                dataChanged = true;
+            }
+
+            // Пересчитываем Hash если данные изменились
+            if (dataChanged || request.Login != null || request.Name != null)
+            {
+                var hashSource = $"{dbUser.Id}|{dbUser.Login}|{dbUser.Name}|{dbUser.DateRegister:yyyyMMdd}";
+                dbUser.Hash = Guid.NewGuid(); // Обновляем хеш при изменении данных
             }
 
             await _context.SaveChangesAsync();
@@ -264,6 +321,38 @@ namespace redb.Core.Postgres.Providers
                     query = query.Where(u => u.DateRegister <= criteria.RegisteredTo.Value);
                 }
 
+                // === ФИЛЬТРЫ ПО НОВЫМ ПОЛЯМ ===
+                
+                // Фильтр по ключу
+                if (criteria.KeyValue.HasValue)
+                {
+                    query = query.Where(u => u.Key == criteria.KeyValue.Value);
+                }
+
+                // Фильтр по целочисленному коду
+                if (criteria.CodeIntValue.HasValue)
+                {
+                    query = query.Where(u => u.CodeInt == criteria.CodeIntValue.Value);
+                }
+
+                // Фильтр по строковому коду
+                if (!string.IsNullOrEmpty(criteria.CodeStringPattern))
+                {
+                    query = query.Where(u => u.CodeString != null && u.CodeString.Contains(criteria.CodeStringPattern));
+                }
+
+                // Фильтр по заметке
+                if (!string.IsNullOrEmpty(criteria.NotePattern))
+                {
+                    query = query.Where(u => u.Note != null && u.Note.Contains(criteria.NotePattern));
+                }
+
+                // Фильтр по GUID коду (редко используется)
+                if (criteria.CodeGuidValue.HasValue)
+                {
+                    query = query.Where(u => u.CodeGuid == criteria.CodeGuidValue.Value);
+                }
+
                 // Применяем сортировку
                 query = criteria.SortBy switch
                 {
@@ -288,6 +377,21 @@ namespace redb.Core.Postgres.Providers
                     UserSortField.Enabled => criteria.SortDirection == UserSortDirection.Ascending
                         ? query.OrderBy(u => u.Enabled)
                         : query.OrderByDescending(u => u.Enabled),
+                    
+                    // === СОРТИРОВКА ПО НОВЫМ ПОЛЯМ ===
+                    UserSortField.Key => criteria.SortDirection == UserSortDirection.Ascending
+                        ? query.OrderBy(u => u.Key)
+                        : query.OrderByDescending(u => u.Key),
+                    UserSortField.CodeInt => criteria.SortDirection == UserSortDirection.Ascending
+                        ? query.OrderBy(u => u.CodeInt)
+                        : query.OrderByDescending(u => u.CodeInt),
+                    UserSortField.CodeString => criteria.SortDirection == UserSortDirection.Ascending
+                        ? query.OrderBy(u => u.CodeString)
+                        : query.OrderByDescending(u => u.CodeString),
+                    UserSortField.Note => criteria.SortDirection == UserSortDirection.Ascending
+                        ? query.OrderBy(u => u.Note)
+                        : query.OrderByDescending(u => u.Note),
+                    
                     _ => query.OrderBy(u => u.Name)
                 };
 
@@ -558,6 +662,48 @@ namespace redb.Core.Postgres.Providers
                     result.AddError("Phone", "Номер телефона слишком короткий");
                 }
             }
+
+            // === ВАЛИДАЦИЯ НОВЫХ ПОЛЕЙ ===
+            
+            // Проверка целочисленного кода (если указан)
+            if (request.CodeInt.HasValue)
+            {
+                if (request.CodeInt.Value < 0)
+                {
+                    result.AddError("CodeInt", "Целочисленный код не может быть отрицательным");
+                }
+                
+                if (request.CodeInt.Value > 999999999) // Разумное ограничение
+                {
+                    result.AddError("CodeInt", "Целочисленный код слишком большой (максимум 999,999,999)");
+                }
+            }
+            
+            // Проверка строкового кода (если указан)
+            if (!string.IsNullOrWhiteSpace(request.CodeString))
+            {
+                if (request.CodeString.Length > 50) // Разумное ограничение
+                {
+                    result.AddError("CodeString", "Строковый код не может быть длиннее 50 символов");
+                }
+                
+                // Проверка на запрещенные символы
+                if (request.CodeString.Contains(";") || request.CodeString.Contains("|"))
+                {
+                    result.AddError("CodeString", "Строковый код не может содержать символы ; или |");
+                }
+            }
+            
+            // Проверка заметки (если указана)
+            if (!string.IsNullOrWhiteSpace(request.Note))
+            {
+                if (request.Note.Length > 1000) // Разумное ограничение для заметок
+                {
+                    result.AddError("Note", "Заметка не может быть длиннее 1000 символов");
+                }
+            }
+            
+            // CodeGuid и Key валидацию не добавляем - они валидны по типу
 
             return result;
         }

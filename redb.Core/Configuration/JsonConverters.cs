@@ -65,6 +65,34 @@ namespace redb.Core.Configuration
         }
     }
 
+    /// <summary>
+    /// JsonConverter для EavSaveStrategy
+    /// </summary>
+    public class EavSaveStrategyJsonConverter : JsonConverter<EavSaveStrategy>
+    {
+        public override EavSaveStrategy Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            var value = reader.GetString();
+            return value?.ToLowerInvariant() switch
+            {
+                "deleteinsert" => EavSaveStrategy.DeleteInsert,
+                "changetracking" => EavSaveStrategy.ChangeTracking,
+                _ => throw new JsonException($"Unknown EavSaveStrategy value: {value}")
+            };
+        }
+
+        public override void Write(Utf8JsonWriter writer, EavSaveStrategy value, JsonSerializerOptions options)
+        {
+            var stringValue = value switch
+            {
+                EavSaveStrategy.DeleteInsert => "DeleteInsert",
+                EavSaveStrategy.ChangeTracking => "ChangeTracking",
+                _ => throw new JsonException($"Unknown EavSaveStrategy value: {value}")
+            };
+            writer.WriteStringValue(stringValue);
+        }
+    }
+
     // SecurityContextPriorityJsonConverter удален - приоритеты больше не используются
 
     /// <summary>
@@ -89,6 +117,7 @@ namespace redb.Core.Configuration
             // Добавляем конвертеры для enum'ов
             options.Converters.Add(new ObjectIdResetStrategyJsonConverter());
             options.Converters.Add(new MissingObjectStrategyJsonConverter());
+            options.Converters.Add(new EavSaveStrategyJsonConverter());
             // options.Converters.Add(new SecurityContextPriorityJsonConverter()); // Убран
             options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase));
 

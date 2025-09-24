@@ -1,0 +1,19 @@
+services:
+  pgdb:
+    restart: always
+    image: postgres
+    user: root
+    networks:
+      network: {}
+    container_name: pgdb
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: 1
+    volumes:
+      - ./data:/var/lib/postgresql/data
+
+networks:
+  network:
+    external: true
+    name: rinat-net

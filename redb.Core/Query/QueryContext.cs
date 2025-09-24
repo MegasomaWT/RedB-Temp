@@ -11,23 +11,32 @@ public class QueryContext<TProps> where TProps : class, new()
     public long SchemeId { get; init; }
     public long? UserId { get; init; }
     public bool CheckPermissions { get; init; }
-    public long? ParentId { get; init; }
-    public long[]? ParentIds { get; set; } // Для batch операций
-    public int? MaxDepth { get; init; }
+    
+    // ✅ СИНХРОНИЗАЦИЯ С RUSLAN ВЕРСИЕЙ: Добавляем поддержку древовидных запросов
+    public long? ParentId { get; init; }                   // Для единичного родителя
+    public long[]? ParentIds { get; set; }                 // Для batch операций
+    public int? MaxDepth { get; init; }                    // Максимальная глубина поиска
     
     public FilterExpression? Filter { get; set; }
     public List<OrderingExpression> Orderings { get; set; } = new();
     public int? Limit { get; set; }
     public int? Offset { get; set; }
     public bool IsDistinct { get; set; }
+    public int? MaxRecursionDepth { get; set; }
+    
+    /// <summary>
+    /// ✅ НОВЫЙ ФЛАГ: Указывает что query должна возвращать пустой результат
+    /// Используется для Where(x => false) и подобных случаев
+    /// </summary>
+    public bool IsEmpty { get; set; }
     
     public QueryContext(long schemeId, long? userId = null, bool checkPermissions = false, long? parentId = null, int? maxDepth = null)
     {
         SchemeId = schemeId;
         UserId = userId;
         CheckPermissions = checkPermissions;
-        ParentId = parentId;
-        MaxDepth = maxDepth;
+        ParentId = parentId;      // ✅ СИНХРОНИЗАЦИЯ: добавляем инициализацию
+        MaxDepth = maxDepth;      // ✅ СИНХРОНИЗАЦИЯ: добавляем инициализацию
     }
     
     /// <summary>
@@ -37,12 +46,14 @@ public class QueryContext<TProps> where TProps : class, new()
     {
         return new QueryContext<TProps>(SchemeId, UserId, CheckPermissions, ParentId, MaxDepth)
         {
-            ParentIds = ParentIds, // Копируем batch массив
+            ParentIds = ParentIds,  // ✅ СИНХРОНИЗАЦИЯ: копируем batch массив
             Filter = Filter,
             Orderings = new List<OrderingExpression>(Orderings),
             Limit = Limit,
             Offset = Offset,
-            IsDistinct = IsDistinct
+            IsDistinct = IsDistinct,
+            MaxRecursionDepth = MaxRecursionDepth,
+            IsEmpty = IsEmpty       // ✅ ИСПРАВЛЕНИЕ: копируем IsEmpty флаг
         };
     }
 }

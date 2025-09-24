@@ -1,0 +1,131 @@
+﻿@page
+@model IndexModel
+@{
+    ViewData["Title"] = "Home page";
+}
+
+@section Scripts {
+    <script type="text/javascript" src="~/js/index.js"></script>
+}
+
+@section Styles {
+    <link href="~/css/index.css" rel="stylesheet" type="text/css" />
+}
+
+<div class="idxContent">
+    <table>
+        <tr>
+            <td></td>
+            <td class="cellCenter"><h1 class="display-5">Postgresql, MSSql, Sqlite and etc.</h1></td>
+        </tr>
+        <tr>
+            <td class="cellCenter">
+                <img class="contentTextIndex" src="img/redbase.png" />
+            </td>
+            <td>
+                <div id="div_text_1" class="div_text">
+                    <h1>↪ redD</h1>
+                    <p style="text-indent:20px"><redB>redB</redB> a database that can be used seamlessly across different database management systems such as MSSQL, PostgreSQL, and SQLite ... needs to adhere to a format that is compatible with all of these systems. One common approach to achieve this is to use SQL (Structured Query Language) as it is widely supported by most relational database management systems.</p>
+                    <p>Here are some key aspects to consider for creating a database that can be used across MSSQL, PostgreSQL, and SQLite ...:</p>
+                    <p>1. Data Types: Use data types that are supported across MSSQL, PostgreSQL, and SQLite... For example, common data types such as integer, text, varchar, boolean, date, and datetime are supported across these systems.</p>
+                    <p>2. SQL Queries: Write SQL queries that are compatible with the syntax and feature set supported by MSSQL, PostgreSQL, and SQLite... Avoid using proprietary features specific to a particular database system.</p>
+                    <p>3. Primary Keys and Constraints: Define primary keys and constraints in a way that is supported by all three systems. This may involve using ANSI SQL standard syntax for defining primary keys and constraints.</p>
+                    <p>4. Indexes: Use index creation syntax that is compatible with MSSQL, PostgreSQL, and SQLite... This will ensure that performance optimizations such as indexing can be applied uniformly.</p>
+                    <p>5. Relationships: Define relationships (foreign keys) between tables in a way that is compatible with all three systems. Ensure that the referencing and referenced columns have compatible types and are indexed where necessary.</p>
+                    <p>6. Stored Procedures and Triggers: Avoid using system-specific stored procedures and triggers. If there is a need to use them, ensure that they are implemented in a manner that is compatible across MSSQL, PostgreSQL, and SQLite...</p>
+                    <br>By following these guidelines and being aware of the differences and limitations of each database system, it is possible to create a database schema and queries that can be used seamlessly across MSSQL, PostgreSQL, and SQLite and etc.
+                    <br>Additionally, the use of an ORM <strong>(Object-Relational Mapping)</strong> framework or a database abstraction layer can also help in achieving compatibility across different database systems.<br>
+                    <br><redb><a href="#" id="div_toggle_1" class="div_toggle">[details]</a></redb>
+                </div>
+            </td>
+        </tr>
+        @*         <tr>
+        <td colspan="2">
+        <div class="splitter2">
+        </div>
+        </td>
+        </tr>
+        *@
+        <tr>
+            <td></td>
+            <td class="cellCenter"><h1 class="display-5">Databases expanding in breadth</h1></td>
+        </tr>
+        <tr>
+            <td class="cellCenter">
+                <img class="contentTextIndex" src="img/inst.png" />
+            </td>
+            <td>
+                <div id="div_text_2" class="div_text">
+                    <p><h1 style="float:left">◌⃗ DB&lt;Set&gt;</h1><img src="~/img/plenty.png" /></p>
+                    <p style="text-indent:20px">The term <redb>"databases expanding in breadth"</redb> could refer to databases that are able to grow horizontally in terms of their capacity, scalability, or support for a broader range of data and functionality. </p>
+                    <p>A horizontally expanding database typically refers to one that can handle increasing amounts of data by adding more nodes, servers, or instances, as opposed to vertically expanding databases, which typically scale by adding more resources to a single server.</p>
+                    <p>Databases that expand horizontally often have built-in support for sharding, replication, or distributed architectures that allow them to effectively distribute and manage data across multiple instances or nodes. Examples of horizontally expanding databases include various NoSQL databases, distributed key-value stores, and some NewSQL databases.</p>
+                    <p>In addition, "expanding in breadth" might also refer to databases that are able to accommodate a wider variety of data types, data structures, or functionality, such as supporting different types of unstructured or semi-structured data, handling varying workloads, or integrating new features without needing a major overhaul of the database architecture.</p>
+                    <br>Overall, databases that expand horizontally or in breadth are designed to provide scalability, flexibility, and agility in handling increasing data volumes and diversified needs, making them well-suited for modern, dynamic, and growing data environments.<strong>This is provided by a very simple relational database "redb", consisting of only a dozen tables.</strong><br>
+                    <br><redb><a href="#" id="div_toggle_2" class="div_toggle">[details]</a></redb>
+                </div>
+            </td>
+        </tr>
+        @*         <tr>
+        <td colspan="2">
+        <div class="splitter2">
+        </div>
+        </td>
+        </tr>
+        *@
+        <tr>
+            <td></td>
+            <td class="cellCenter"><h1 class="display-5">Object-oriented databases</h1></td>
+        </tr>
+        <tr>
+            <td class="cellCenter">
+                <img class="contentTextIndex" src="img/silverB.png" />
+            </td>
+            <td>
+                <div id="div_text_3" class="div_text">
+                    <h1>redB ↔ OODB</h1>
+                    <p style="text-indent:20px">Object-oriented databases (OODB) represent a class of database management systems that are designed to work well with object-oriented programming languages and models. In contrast to traditional relational databases, which store data in tabular format, OODBs are structured to store complex data types and relationships in a natural and intuitive manner.</p>
+                    <p>One of the key features of OODBs is their ability to directly store and retrieve objects, providing a seamless transition between the object-oriented programming model and the database model. This allows for greater consistency and simplification in application development, as objects can be directly stored and retrieved without requiring complex mapping between the application and data layers.</p>
+                    <p>In an OODB, data is typically organized as objects, with attributes and methods, similar to how objects are represented in object-oriented programming languages like Java or C++. This allows for more natural and intuitive representation of complex data structures, which is particularly beneficial for applications that deal with intricate relationships and behaviors.</p>
+                    <p>OODBs also offer support for features such as inheritance, polymorphism, and encapsulation, which are fundamental concepts in object-oriented programming. This provides a more coherent and seamless approach to working with data, as developers can leverage the full power of object-oriented programming directly within the database.</p>
+                    <br>Overall, object-oriented databases provide a compelling alternative to traditional relational databases for applications where the object-oriented paradigm is a natural fit. They offer simplicity, efficiency, and consistency in managing data, and are particularly well-suited for applications and systems developed using object-oriented programming languages and models.<br>
+                    <br><redb><a href="#" id="div_toggle_3" class="div_toggle">[details]</a></redb>
+                </div>
+            </td>
+        </tr>
+        <tr>
+            <td></td>
+            <td class="cellCenter"><h1 class="display-5">Entities and their properties</h1></td>
+        </tr>
+        <tr>
+            <td class="cellCenter">
+                <img class="contentTextIndex" src="img/diagram2.png" />
+            </td>
+            <td>
+                <div id="div_text_4" class="div_text">
+                    <h1>↯ redB Structure</h1>
+                    <p style="text-indent:20px">Sure, the database schema for storing entities, their properties, and types in sql could look something like this:</p>
+                    <pre><code class="hljs sql">sql<br>CREATE TABLE Entities (<br>    entity_id INT PRIMARY KEY,<br>    name VARCHAR(100)<br>);<br><br><span class="hljs-operator"><span class="hljs-keyword">CREATE</span> <span class="hljs-keyword">TABLE</span> Properties (</span><br><span class="hljs-operator">    property_id <span class="hljs-built_in">INT</span> PRIMARY <span class="hljs-keyword">KEY</span>,</span><br><span class="hljs-operator">    <span class="hljs-keyword">name</span> <span class="hljs-built_in">VARCHAR</span>(<span class="hljs-number">100</span>),</span><br><span class="hljs-operator">    type_id <span class="hljs-built_in">INT</span>,</span><br><span class="hljs-operator">    FOREIGN <span class="hljs-keyword">KEY</span> (type_id) <span class="hljs-keyword">REFERENCES</span> Types(type_id)</span><br><span class="hljs-operator">);</span><br><br><span class="hljs-operator"><span class="hljs-keyword">CREATE</span> <span class="hljs-keyword">TABLE</span> Types (</span><br><span class="hljs-operator">    type_id <span class="hljs-built_in">INT</span> PRIMARY <span class="hljs-keyword">KEY</span>,</span><br><span class="hljs-operator">    <span class="hljs-keyword">name</span> <span class="hljs-built_in">VARCHAR</span>(<span class="hljs-number">100</span>)</span><br><span class="hljs-operator">);</span><br></code></pre>
+                    <br><br>In this schema:<br>- The `Entities` table stores the entities with their unique `entity_id` and `name`.<br>- The `Properties` table holds the properties of the entities with unique `property_id`, `name`, and `type_id` where `type_id` is a foreign key referenced to the `Types` table.<br>- The `Types` table contains the data types with unique `type_id` and `name`.<br><br>For example, if you have an entity "Person" and properties "Name", "Age", "Gender", the data could be represented as:<br><br>
+                    <pre><code class="hljs cpp">sql<br>Entities:<br>| entity_id | name   |<br>|-----------|--------|<br>| <span class="hljs-number">1</span>         | Person |<br><br>Properties:<br>| property_id | name   | type_id |<br>|-------------|--------|---------|<br>| <span class="hljs-number">1</span>           | Name   | <span class="hljs-number">1</span>       |<br>| <span class="hljs-number">2</span>           | Age    | <span class="hljs-number">2</span>       |<br>| <span class="hljs-number">3</span>           | Gender | <span class="hljs-number">3</span>       |<br><br>Types:<br>| type_id | name   |<br>|---------|--------|<br>| <span class="hljs-number">1</span>       | String |<br>| <span class="hljs-number">2</span>       | Integer|<br>| <span class="hljs-number">3</span>       | String |<br></code></pre><br><br>This database schema allows you to efficiently manage entities, their properties, and data types in your application.<br>
+                    <p>However, such a scheme binds us to DDL, real types must be converted when searching, it will not be possible to build an index based on real values. Linking to DDL entails rebuilding the code of services with working data: many entities, many tables, many code, many errors. All this is solved in the <redb>redb</redb> structure.</p>
+                    <br><redb><a href="#" id="div_toggle_4" class="div_toggle">[details]</a></redb>
+                </div>
+            </td>
+        </tr>
+        <tr>
+            <td colspan="2">
+                <div class="splitter2">
+                </div>
+            </td>
+        </tr>
+        <tr>
+            <td></td>
+            <td class="cellCenter">
+                What are the advantages of "redb": a relational database, few entities, easy to learn, use and expand.
+                <br />
+                <strong>The familiar world of queries.</strong>
+            </td>
+        </tr>
+    </table>
+</div>

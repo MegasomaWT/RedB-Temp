@@ -1,12 +1,18 @@
 using redb.Core.Models.Entities;
 using redb.Core.Models.Contracts;
+using redb.Core.Models.Configuration;
+using redb.Core.DBModels;
 using redb.Core.Utils;
 using redb.Core.Caching;
 using redb.Core.Providers;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace redb.Core.Models.Entities
 {
@@ -15,23 +21,51 @@ namespace redb.Core.Models.Entities
     /// Имена полей совпадают с JSON/БД (snake_case), чтобы обходиться без атрибутов и настроек
     /// Наследуется от базового RedbObject для унификации API
     /// Реализует типизированный интерфейс IRedbObject<TProps> для типобезопасности
+    /// 
+    /// Сохранение объектов использует ChangeTracking стратегию по умолчанию -
+    /// сравнение с БД и обновление только измененных свойств
     /// </summary>
     public class RedbObject<TProps> : RedbObject, IRedbObject<TProps> where TProps : class, new()
     {
-        public RedbObject() { }
+        private static RedbServiceConfiguration? _configuration;
+
+        public RedbObject()
+        {
+        }
 
         public RedbObject(TProps props)
         {
-            properties = props;
+            _properties = props;
         }
 
         public static explicit operator TProps(RedbObject<TProps> obj) => obj.properties;
 
-        // Свойства объекта (секция properties)
-        public TProps properties { get; set; } = new TProps();
+        // ✅ ЕДИНСТВЕННЫЙ ИСТОЧНИК ДАННЫХ - всегда актуальные данные (сериализуется в JSON)
+        private TProps _properties = new TProps();
+        
+        public TProps properties 
+        { 
+            get => _properties;
+            set => _properties = value;
+        }
 
-        // Удобный доступ
-        public TProps Pr => properties;
+        /// <summary>
+        /// Получить конфигурацию (пока заглушка, позже будет через DI)
+        /// </summary>
+        public static RedbServiceConfiguration GetConfiguration()
+        {
+            return _configuration ??= new RedbServiceConfiguration();
+        }
+
+        /// <summary>
+        /// Установить конфигурацию (для тестирования и инициализации)
+        /// </summary>
+        public static void SetConfiguration(RedbServiceConfiguration configuration)
+        {
+            _configuration = configuration;
+        }
+
+
 
         // Пересчитать MD5-хеш по значениям properties и записать в поле hash
         public override void RecomputeHash()
@@ -41,6 +75,8 @@ namespace redb.Core.Models.Entities
 
         // Получить MD5-хеш по значениям properties, не меняя поле hash
         public override Guid ComputeHash() => RedbHash.ComputeFor(this) ?? Guid.Empty;
+
+
         
         // ===== ТИПИЗИРОВАННЫЕ МЕТОДЫ КЕША И МЕТАДАННЫХ =====
         

@@ -55,7 +55,7 @@ namespace redb.Core.Postgres.Providers
             if (!AutomaticTypeRegistry.IsInitialized)
             {
                 await AutomaticTypeRegistry.InitializeAsync(_schemeSyncProvider);
-                Console.WriteLine("AutomaticTypeRegistry инициализирован для полиморфных операций");
+
             }
         }
 
@@ -282,7 +282,7 @@ namespace redb.Core.Postgres.Providers
                 catch (Exception ex)
                 {
                     // Логируем ошибку десериализации, но продолжаем
-                    Console.WriteLine($"Ошибка десериализации объекта: {ex.Message}");
+
                 }
             }
             
@@ -301,7 +301,7 @@ namespace redb.Core.Postgres.Providers
                 if (visited.Contains(currentId.Value))
                 {
                     // Логируем проблему, но не бросаем исключение - возвращаем путь который смогли построить
-                    Console.WriteLine($"⚠️ ПРЕДУПРЕЖДЕНИЕ: Обнаружена циклическая ссылка в дереве при построении пути для объекта {objectId}. Цикл на объекте {currentId.Value}.");
+
                     break;
                 }
                 
@@ -645,7 +645,7 @@ namespace redb.Core.Postgres.Providers
                 catch (Exception ex)
                 {
                     // Логируем ошибку десериализации, но продолжаем
-                    Console.WriteLine($"Ошибка десериализации полиморфного объекта {result.ObjectId}: {ex.Message}");
+
                 }
             }
             
@@ -663,7 +663,7 @@ namespace redb.Core.Postgres.Providers
                 // 🚨 КРИТИЧЕСКАЯ ПРОВЕРКА: Обнаружение циклической ссылки
                 if (visited.Contains(currentId.Value))
                 {
-                    Console.WriteLine($"⚠️ ПРЕДУПРЕЖДЕНИЕ: Обнаружена циклическая ссылка в дереве при построении полиморфного пути для объекта {objectId}. Цикл на объекте {currentId.Value}.");
+
                     break;
                 }
                 
@@ -807,6 +807,14 @@ namespace redb.Core.Postgres.Providers
             public DateTime? DateDismiss { get; set; }
             public string? Phone { get; set; }
             public string? Email { get; set; }
+            
+            // === НОВЫЕ ПОЛЯ ===
+            public long? Key { get; set; }
+            public long? CodeInt { get; set; }
+            public string? CodeString { get; set; }
+            public Guid? CodeGuid { get; set; }
+            public string? Note { get; set; }
+            public Guid? Hash { get; set; }
         }
 
         /// <summary>

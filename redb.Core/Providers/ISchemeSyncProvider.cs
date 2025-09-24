@@ -11,12 +11,12 @@ namespace redb.Core.Providers
     public interface ISchemeSyncProvider
     {
         // ===== МЕТОДЫ С КОНТРАКТАМИ =====
-        
+
         /// <summary>
         /// Создать/получить схему по имени из типа свойств
         /// Если schemeName = null, используется имя класса TProps
         /// </summary>
-        Task<IRedbScheme> EnsureSchemeFromTypeAsync<TProps>(string? schemeName = null, string? alias = null) where TProps : class;
+        Task<IRedbScheme> EnsureSchemeFromTypeAsync<TProps>() where TProps : class;
 
         /// <summary>
         /// Синхронизировать структуры схемы по типу свойств (по умолчанию удаляет лишние поля)

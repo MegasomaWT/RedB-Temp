@@ -1,8 +1,7 @@
 using redb.Core.Query;
-using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using redb.Core.Models.Contracts;
-using redb.Core.Models.Security;
 
 namespace redb.Core.Providers
 {
@@ -11,31 +10,6 @@ namespace redb.Core.Providers
     /// </summary>
     public interface IQueryableProvider
     {
-        /// <summary>
-        /// Создать типобезопасный запрос для схемы с указанным пользователем
-        /// </summary>
-        IRedbQueryable<TProps> Query<TProps>(IRedbScheme scheme, IRedbUser user) where TProps : class, new();
-
-        /// <summary>
-        /// Создать типобезопасный запрос для схемы с текущим пользователем из контекста
-        /// </summary>
-        IRedbQueryable<TProps> Query<TProps>(IRedbScheme scheme) where TProps : class, new();
-
-        /// <summary>
-        /// Создать типобезопасный запрос для схемы с указанным пользователем (асинхронно)
-        /// </summary>
-        Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbScheme scheme, IRedbUser user) where TProps : class, new();
-
-        /// <summary>
-        /// Создать типобезопасный запрос для схемы с текущим пользователем из контекста (асинхронно)
-        /// </summary>
-        Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbScheme scheme) where TProps : class, new();
-        
-        /// <summary>
-        /// Создать типобезопасный запрос по имени схемы (автоматически найдет схему)
-        /// </summary>
-        Task<IRedbQueryable<TProps>> QueryAsync<TProps>(string schemeName) where TProps : class, new();
-        
         /// <summary>
         /// Создать типобезопасный запрос по типу (автоматически определит схему по имени класса)
         /// </summary>
@@ -56,66 +30,110 @@ namespace redb.Core.Providers
         /// </summary>
         IRedbQueryable<TProps> Query<TProps>(IRedbUser user) where TProps : class, new();
         
-        /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов (автоматически определит схему по типу)
-        /// </summary>
-        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj) where TProps : class, new();
+        // ===== ДРЕВОВИДНЫЕ LINQ-ЗАПРОСЫ =====
         
         /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов с указанным пользователем
+        /// Создать типобезопасный древовидный запрос по типу (автоматически определит схему по имени класса)
+        /// Поддерживает иерархические операторы: WhereHasAncestor, WhereHasDescendant, WhereLevel, WhereRoots, WhereLeaves
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj, IRedbUser user) where TProps : class, new();
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>() where TProps : class, new();
         
         /// <summary>
-        /// Синхронная версия запроса дочерних объектов
+        /// Создать типобезопасный древовидный запрос по типу с указанным пользователем
+        /// Поддерживает иерархические операторы: WhereHasAncestor, WhereHasDescendant, WhereLevel, WhereRoots, WhereLeaves
         /// </summary>
-        IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject? parentObj) where TProps : class, new();
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbUser user) where TProps : class, new();
         
         /// <summary>
-        /// Создать типобезопасный запрос для всех потомков объекта (автоматически определит схему по типу)
+        /// Создать типобезопасный древовидный запрос по типу (синхронно)
+        /// Поддерживает иерархические операторы: WhereHasAncestor, WhereHasDescendant, WhereLevel, WhereRoots, WhereLeaves
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new();
+        ITreeQueryable<TProps> TreeQuery<TProps>() where TProps : class, new();
         
         /// <summary>
-        /// Создать типобезопасный запрос для всех потомков объекта с указанным пользователем
+        /// Создать типобезопасный древовидный запрос по типу с указанным пользователем (синхронно)
+        /// Поддерживает иерархические операторы: WhereHasAncestor, WhereHasDescendant, WhereLevel, WhereRoots, WhereLeaves
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+        ITreeQueryable<TProps> TreeQuery<TProps>(IRedbUser user) where TProps : class, new();
+        
+        // ===== ДРЕВОВИДНЫЕ LINQ С ОГРАНИЧЕНИЕМ ПОДДЕРЕВА =====
         
         /// <summary>
-        /// Синхронная версия запроса потомков
+        /// Создать древовидный запрос ограниченный поддеревом конкретного объекта (по ID)
+        /// Поиск будет выполняться только среди потомков указанного rootObjectId
         /// </summary>
-        IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new();
-
-        // ===== BATCH МЕТОДЫ ДЛЯ РАБОТЫ С НЕСКОЛЬКИМИ РОДИТЕЛЬСКИМИ ОБЪЕКТАМИ =====
-
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(long rootObjectId, int? maxDepth = null) where TProps : class, new();
+        
         /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревом конкретного объекта
+        /// Поиск будет выполняться только среди потомков указанного rootObject
+        /// Если rootObject = null, возвращает пустой queryable (удобнее для клиентского кода)
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new();
-
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbObject? rootObject, int? maxDepth = null) where TProps : class, new();
+        
         /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей с указанным пользователем
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревьями списка объектов  
+        /// Поиск будет выполняться среди потомков ЛЮБОГО из указанных rootObjects
+        /// Если список пустой, возвращает пустой queryable (удобнее для клиентского кода)
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user) where TProps : class, new();
-
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IEnumerable<IRedbObject> rootObjects, int? maxDepth = null) where TProps : class, new();
+        
         /// <summary>
-        /// Синхронная версия запроса дочерних объектов нескольких родителей
+        /// Создать древовидный запрос ограниченный поддеревом с указанным пользователем (по ID)
+        /// Поиск будет выполняться только среди потомков указанного rootObjectId
         /// </summary>
-        IRedbQueryable<TProps> QueryChildren<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new();
-
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(long rootObjectId, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+        
+        // ===== ДРЕВОВИДНЫЕ LINQ С ПОЛЬЗОВАТЕЛЯМИ И РАСШИРЕННЫМИ ВОЗМОЖНОСТЯМИ =====
+        
         /// <summary>
-        /// Создать типобезопасный запрос для всех потомков нескольких родителей
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревом с указанным пользователем
+        /// Если rootObject = null, возвращает пустой queryable (удобнее для клиентского кода) 
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new();
-
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbObject? rootObject, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+        
         /// <summary>
-        /// Создать типобезопасный запрос для всех потомков нескольких родителей с указанным пользователем
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревьями списка объектов с указанным пользователем
+        /// Если список пустой, возвращает пустой queryable (удобнее для клиентского кода)
         /// </summary>
-        Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user, int? maxDepth = null) where TProps : class, new();
-
+        Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IEnumerable<IRedbObject> rootObjects, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+        
+        // ===== СИНХРОННЫЕ ВЕРСИИ =====
+        
         /// <summary>
-        /// Синхронная версия запроса потомков нескольких родителей
+        /// Создать древовидный запрос ограниченный поддеревом (синхронно, по ID)
+        /// Поиск будет выполняться только среди потомков указанного rootObjectId
         /// </summary>
-        IRedbQueryable<TProps> QueryDescendants<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new();
+        ITreeQueryable<TProps> TreeQuery<TProps>(long rootObjectId, int? maxDepth = null) where TProps : class, new();
+        
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревом (синхронно)
+        /// Если rootObject = null, возвращает пустой queryable (удобнее для клиентского кода)
+        /// </summary>
+        ITreeQueryable<TProps> TreeQuery<TProps>(IRedbObject? rootObject, int? maxDepth = null) where TProps : class, new();
+        
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревьями списка объектов (синхронно)
+        /// Если список пустой, возвращает пустой queryable (удобнее для клиентского кода)
+        /// </summary>
+        ITreeQueryable<TProps> TreeQuery<TProps>(IEnumerable<IRedbObject> rootObjects, int? maxDepth = null) where TProps : class, new();
+        
+        /// <summary>
+        /// Создать древовидный запрос ограниченный поддеревом с указанным пользователем (синхронно, по ID)
+        /// Поиск будет выполняться только среди потомков указанного rootObjectId
+        /// </summary>
+        ITreeQueryable<TProps> TreeQuery<TProps>(long rootObjectId, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+        
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревом с указанным пользователем (синхронно)
+        /// Если rootObject = null, возвращает пустой queryable (удобнее для клиентского кода)
+        /// </summary>
+        ITreeQueryable<TProps> TreeQuery<TProps>(IRedbObject? rootObject, IRedbUser user, int? maxDepth = null) where TProps : class, new();
+        
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Создать древовидный запрос ограниченный поддеревьями списка объектов с указанным пользователем (синхронно)
+        /// Если список пустой, возвращает пустой queryable (удобнее для клиентского кода)
+        /// </summary>
+        ITreeQueryable<TProps> TreeQuery<TProps>(IEnumerable<IRedbObject> rootObjects, IRedbUser user, int? maxDepth = null) where TProps : class, new();
     }
 }

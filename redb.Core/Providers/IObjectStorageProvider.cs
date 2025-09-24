@@ -1,5 +1,6 @@
 using redb.Core.Models.Entities;
 using redb.Core.Models.Contracts;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 
 namespace redb.Core.Providers
@@ -54,5 +55,24 @@ namespace redb.Core.Providers
         /// Удалить объект с явно указанным пользователем (использует config.DefaultCheckPermissionsOnDelete)
         /// </summary>
         Task<bool> DeleteAsync<TProps>(IRedbObject<TProps> obj, IRedbUser user) where TProps : class, new();
+
+        // ===== МАССОВЫЕ ОПЕРАЦИИ (БЕЗ ПРОВЕРКИ ПРАВ) =====
+        
+        /// <summary>
+        /// 🚀 МАССОВАЯ ВСТАВКА: Создать множество новых объектов за одну операцию (НЕ проверяет права)
+        /// - Создает схемы если их нет (аналогично SaveAsync)
+        /// - Генерирует ID для объектов с id == 0 через GetNextKey
+        /// - Полностью обрабатывает рекурсивные вложенные объекты, массивы, Class поля
+        /// - Использует BulkInsert для максимальной производительности
+        /// - Если id != 0 полагается на ошибки БД для дубликатов (не проверяет заранее)
+        /// </summary>
+        Task<List<long>> AddNewObjectsAsync<TProps>(List<IRedbObject<TProps>> objects) where TProps : class, new();
+        
+        /// <summary>
+        /// 🚀 МАССОВАЯ ВСТАВКА с явным пользователем: Создать множество новых объектов (НЕ проверяет права)
+        /// - Устанавливает OwnerId и WhoChangeId для всех объектов от указанного пользователя
+        /// - Остальная логика идентична AddNewObjectsAsync без пользователя
+        /// </summary>
+        Task<List<long>> AddNewObjectsAsync<TProps>(List<IRedbObject<TProps>> objects, IRedbUser user) where TProps : class, new();
     }
 }

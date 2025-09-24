@@ -191,35 +191,61 @@ namespace redb.Core.Models.Entities
     }
 
     /// <summary>
-    /// Типизированная версия древовидного объекта REDB для обратной совместимости
-    /// Расширяет базовый TreeRedbObject добавляя типизированные свойства и навигацию
+    /// ✅ АРХИТЕКТУРНОЕ ИСПРАВЛЕНИЕ: Типизированная версия древовидного объекта REDB
+    /// НОВОЕ НАСЛЕДОВАНИЕ: RedbObject<TProps> вместо TreeRedbObject
+    /// ПРЕИМУЩЕСТВА: Прямое приведение типов, устранение дублирования properties, нет конверсии
     /// </summary>
     /// <typeparam name="TProps">Тип свойств объекта</typeparam>
-    public class TreeRedbObject<TProps> : TreeRedbObject, ITreeRedbObject<TProps>
+    public class TreeRedbObject<TProps> : RedbObject<TProps>, ITreeRedbObject<TProps>
         where TProps : class, new()
     {
+        // ✅ ИСПРАВЛЕНИЕ: properties наследуется от RedbObject<TProps> - дублирование устранено!
+
         /// <summary>
-        /// Типизированные свойства объекта
+        /// ✅ TREE-СПЕЦИФИЧНЫЕ СВОЙСТВА (теперь не наследуются от TreeRedbObject)
         /// </summary>
-        public TProps properties { get; set; } = new TProps();
-
-        // Удобный доступ
-        public TProps Pr => properties;
-
+        
         /// <summary>
         /// Типизированная ссылка на родительский объект
         /// </summary>
-        public new ITreeRedbObject<TProps>? Parent { get; set; }
+        public ITreeRedbObject<TProps>? Parent { get; set; }
         
         /// <summary>
         /// Типизированная коллекция дочерних объектов
         /// </summary>
-        public new ICollection<ITreeRedbObject<TProps>> Children { get; set; } = new List<ITreeRedbObject<TProps>>();
+        public ICollection<ITreeRedbObject<TProps>> Children { get; set; } = new List<ITreeRedbObject<TProps>>();
+
+        /// <summary>
+        /// ✅ TREE НАВИГАЦИОННЫЕ СВОЙСТВА (перенесены из базового TreeRedbObject)
+        /// </summary>
+        
+        /// <summary>
+        /// Проверяет, является ли узел листом (без детей)
+        /// </summary>
+        public bool IsLeaf => !Children.Any();
+        
+        /// <summary>
+        /// Получает уровень узла в дереве (0 для корня)
+        /// </summary>
+        public int Level
+        {
+            get
+            {
+                int level = 0;
+                var current = Parent;
+                while (current != null)
+                {
+                    level++;
+                    current = current.Parent;
+                }
+                return level;
+            }
+        }
 
         /// <summary>
         /// Типизированная версия получения поддерева
         /// </summary>
-        public new IEnumerable<ITreeRedbObject<TProps>> GetSubtree()
+        public IEnumerable<ITreeRedbObject<TProps>> GetSubtree()
         {
             yield return this;
             
@@ -231,9 +257,9 @@ namespace redb.Core.Models.Entities
         }
         
         /// <summary>
-        /// Типизированная версия получения предков
+        /// Получает всех предков узла (от родителя к корню)
         /// </summary>
-        public new IEnumerable<ITreeRedbObject<TProps>> Ancestors
+        public IEnumerable<ITreeRedbObject<TProps>> Ancestors
         {
             get
             {
@@ -247,9 +273,9 @@ namespace redb.Core.Models.Entities
         }
         
         /// <summary>
-        /// Типизированная версия получения потомков
+        /// Получает всех потомков узла рекурсивно
         /// </summary>
-        public new IEnumerable<ITreeRedbObject<TProps>> Descendants
+        public IEnumerable<ITreeRedbObject<TProps>> Descendants
         {
             get
             {
@@ -261,105 +287,91 @@ namespace redb.Core.Models.Entities
                 }
             }
         }
-        
-        // ===== ТИПИЗИРОВАННЫЕ МЕТОДЫ КЕША И МЕТАДАННЫХ =====
-        
-        /// <summary>
-        /// Получить схему для типа TProps (с использованием кеша атрибутов)
-        /// </summary>
-        public async Task<IRedbScheme> GetSchemeForTypeAsync()
-        {
-            if (GetSchemeSyncProvider() == null)
-                throw new InvalidOperationException("SchemeSyncProvider не установлен. Используйте RedbObject.SetSchemeSyncProvider().");
-                
-            return await GetSchemeSyncProvider()!.EnsureSchemeFromTypeAsync<TProps>();
-        }
-        
-        /// <summary>
-        /// Получить структуры схемы для типа TProps (с использованием кеша)
-        /// </summary>
-        public async Task<IReadOnlyCollection<IRedbStructure>> GetStructuresForTypeAsync()
-        {
-            var scheme = await GetSchemeForTypeAsync();
-            return scheme.Structures;
-        }
-        
-        /// <summary>
-        /// Пересчитать хеш на основе текущих свойств типа TProps
-        /// </summary>
-        public void RecomputeHashForType()
-        {
-            RecomputeHash(); // Используем существующую реализацию
-        }
-        
-        /// <summary>
-        /// Получить новый хеш на основе текущих свойств без изменения объекта
-        /// </summary>
-        public Guid ComputeHashForType()
-        {
-            return ComputeHash(); // Используем существующую реализацию
-        }
-        
-        /// <summary>
-        /// Проверить, соответствует ли текущий хеш свойствам типа TProps
-        /// </summary>
-        public bool IsHashValidForType()
-        {
-            if (!hash.HasValue)
-                return false;
-                
-            var computedHash = ComputeHashForType();
-            return hash.Value == computedHash;
-        }
-        
-        /// <summary>
-        /// Создать копию объекта с теми же метаданными но новыми свойствами
-        /// </summary>
-        public IRedbObject<TProps> CloneWithProperties(TProps newProperties)
-        {
-            return new TreeRedbObject<TProps>
-            {
-                properties = newProperties,
-                // Копируем все метаданные кроме ID (чтобы создать новый объект)
-                parent_id = this.parent_id,
-                scheme_id = this.scheme_id,
-                owner_id = this.owner_id,
-                who_change_id = this.who_change_id,
-                date_create = DateTime.Now, // Новое время создания
-                date_modify = DateTime.Now, // Новое время изменения
-                date_begin = this.date_begin,
-                date_complete = this.date_complete,
-                key = this.key,
-                code_int = this.code_int,
-                code_string = this.code_string,
-                code_guid = this.code_guid,
-                name = this.name,
-                note = this.note,
-                @bool = this.@bool,
-                // hash будет пересчитан автоматически при сохранении
-            };
-        }
-        
-        /// <summary>
-        /// Инвалидировать кеш схемы для типа TProps
-        /// </summary>
-        public void InvalidateCacheForType()
-        {
-            // Для TreeRedbObject кеш инвалидируется через базовый механизм
-            // Конкретная реализация зависит от того, как организован кеш в системе
-        }
-        
-        /// <summary>
-        /// Прогреть кеш схемы для типа TProps асинхронно
-        /// </summary>
-        public async Task WarmupCacheForTypeAsync()
-        {
-            // Для TreeRedbObject кеш прогревается через базовый механизм
-            // Получение схемы автоматически прогреет кеш
-            await GetSchemeForTypeAsync();
-        }
 
-        // Синхронизация с базовым классом для полиморфной работы
+        /// <summary>
+        /// ✅ МЕТОДЫ НАВИГАЦИИ (перенесены из базового TreeRedbObject)
+        /// </summary>
+        
+        /// <summary>
+        /// Получает путь от корня к текущему узлу в виде ID
+        /// </summary>
+        public IEnumerable<long> GetPathIds()
+        {
+            var path = new List<long>();
+            var current = (ITreeRedbObject<TProps>?)this;
+            
+            while (current != null)
+            {
+                path.Insert(0, current.Id);
+                current = current.Parent;
+            }
+            
+            return path;
+        }
+        
+        /// <summary>
+        /// Получает хлебные крошки (breadcrumbs) для навигации
+        /// </summary>
+        public string GetBreadcrumbs(string separator = " > ", bool includeIds = false)
+        {
+            var ancestors = Ancestors.Reverse().ToList();
+            var path = ancestors.Append(this);
+            
+            var names = path.Select(node => 
+            {
+                var displayName = node.Name ?? $"Object {node.Id}";
+                return includeIds ? $"{displayName} ({node.Id})" : displayName;
+            });
+            
+            return string.Join(separator, names);
+        }
+        
+        /// <summary>
+        /// Проверяет, является ли текущий узел потомком указанного узла
+        /// </summary>
+        public bool IsDescendantOf(ITreeRedbObject<TProps> ancestor)
+        {
+            var current = Parent;
+            while (current != null)
+            {
+                if (current.Id == ancestor.Id)
+                    return true;
+                current = current.Parent;
+            }
+            return false;
+        }
+        
+        /// <summary>
+        /// Проверяет, является ли текущий узел предком указанного узла
+        /// </summary>
+        public bool IsAncestorOf(ITreeRedbObject<TProps> descendant)
+        {
+            return descendant.IsDescendantOf(this);
+        }
+        
+        /// <summary>
+        /// Получает количество узлов в поддереве (включая текущий)
+        /// </summary>
+        public int SubtreeSize => GetSubtree().Count();
+        
+        /// <summary>
+        /// Получает максимальную глубину поддерева от текущего узла
+        /// </summary>
+        public int MaxDepth
+        {
+            get
+            {
+                if (!Children.Any())
+                    return 0;
+                
+                return 1 + Children.Max(child => child.MaxDepth);
+            }
+        }
+        
+        // ✅ УБРАНО: Методы кеша и метаданных наследуются от RedbObject<TProps>
+        // Дублирование устранено - используем базовую реализацию!
+
+        // ✅ ИНТЕРФЕЙСНАЯ СОВМЕСТИМОСТЬ: Реализация ITreeRedbObject для полиморфной работы
         ITreeRedbObject? ITreeRedbObject.Parent 
         { 
             get => Parent; 
@@ -370,6 +382,49 @@ namespace redb.Core.Models.Entities
         { 
             get => Children.Cast<ITreeRedbObject>().ToList(); 
             set => Children = value.Cast<ITreeRedbObject<TProps>>().ToList(); 
+        }
+        
+        // ✅ TREE НАВИГАЦИОННЫЕ МЕТОДЫ ДЛЯ БАЗОВОГО ИНТЕРФЕЙСА
+        IEnumerable<ITreeRedbObject> ITreeRedbObject.GetSubtree()
+        {
+            return GetSubtree().Cast<ITreeRedbObject>();
+        }
+        
+        IEnumerable<ITreeRedbObject> ITreeRedbObject.Ancestors
+        {
+            get => Ancestors.Cast<ITreeRedbObject>();
+        }
+        
+        IEnumerable<ITreeRedbObject> ITreeRedbObject.Descendants
+        {
+            get => Descendants.Cast<ITreeRedbObject>();
+        }
+        
+        bool ITreeRedbObject.IsDescendantOf(ITreeRedbObject ancestor)
+        {
+            var current = Parent;
+            while (current != null)
+            {
+                if (current.Id == ancestor.Id)
+                    return true;
+                current = current.Parent;
+            }
+            return false;
+        }
+        
+        bool ITreeRedbObject.IsAncestorOf(ITreeRedbObject descendant)
+        {
+            return descendant.IsDescendantOf(this);
+        }
+        
+        IEnumerable<long> ITreeRedbObject.GetPathIds()
+        {
+            return GetPathIds();
+        }
+        
+        string ITreeRedbObject.GetBreadcrumbs(string separator, bool includeIds)
+        {
+            return GetBreadcrumbs(separator, includeIds);
         }
     }
 }

@@ -15,6 +15,7 @@ using redb.Core.Caching;
 using System;
 using System.Collections.Concurrent;
 using System.Text.Json.Serialization;
+using System.Text.Json;
 
 namespace redb.Core.Postgres.Providers
 {
@@ -26,6 +27,10 @@ namespace redb.Core.Postgres.Providers
         private readonly RedbContext _context;
         private readonly RedbServiceConfiguration _configuration;
         
+        // 🌳 КЕШ ДЕРЕВА СТРУКТУР для быстрого доступа к иерархии
+        private static readonly ConcurrentDictionary<long, List<StructureTreeNode>> _structureTreeCache = new();
+        private static readonly ConcurrentDictionary<(long, long?), List<StructureTreeNode>> _subtreeCache = new();
+        
         public PostgresSchemeSyncProvider(RedbContext context, RedbServiceConfiguration? configuration = null)
         {
             _context = context;
@@ -35,10 +40,20 @@ namespace redb.Core.Postgres.Providers
             GlobalMetadataCache.Initialize(_configuration);
         }
 
-        public async Task<IRedbScheme> EnsureSchemeFromTypeAsync<TProps>(string? schemeName = null, string? alias = null) where TProps : class
+        public async Task<IRedbScheme> EnsureSchemeFromTypeAsync<TProps>() where TProps : class
+        {
+            return await EnsureSchemeFromTypeAsync(typeof(TProps).Name, GetSchemeAliasForType<TProps>());
+        }
+
+        private async Task<IRedbScheme> EnsureSchemeFromTypeAsync(string? schemeName = null, string? alias = null) 
         {
             // Используем имя класса, если schemeName не указано
-            var actualSchemeName = schemeName ?? typeof(TProps).Name;
+            var actualSchemeName = schemeName;
+            
+            if (string.IsNullOrEmpty(actualSchemeName))
+            {
+                throw new ArgumentException("Имя схемы не может быть пустым. Используйте EnsureSchemeFromTypeAsync<TProps>() для автоопределения имени по типу.");
+            }
             
             // Попытка найти существующую схему по имени
             var existingScheme = await _context.Schemes
@@ -65,61 +80,17 @@ namespace redb.Core.Postgres.Providers
 
         public async Task<List<IRedbStructure>> SyncStructuresFromTypeAsync<TProps>(IRedbScheme scheme, bool strictDeleteExtra = true) where TProps : class
         {
+
+            
             // Получение существующих структур схемы
             var existingStructures = await _context.Structures
                 .Where(s => s.IdScheme == scheme.Id)
                 .ToListAsync();
 
-            // Получение свойств типа через рефлексию (исключаем поля с [JsonIgnore])
-            var properties = typeof(TProps).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => !p.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any())
-                .ToArray();
-            var nullabilityContext = new NullabilityInfoContext();
-
             var structuresToKeep = new List<long>();
 
-            foreach (var property in properties)
-            {
-                var nullabilityInfo = nullabilityContext.Create(property);
-                var isArray = IsArrayType(property.PropertyType);
-                var baseType = isArray ? GetArrayElementType(property.PropertyType) : property.PropertyType;
-                
-                // Определяем обязательность: не nullable и не имеет Nullable<T>
-                var isRequired = nullabilityInfo.WriteState != NullabilityState.Nullable && 
-                                Nullable.GetUnderlyingType(baseType) == null;
-                
-                var typeId = await GetTypeIdForTypeAsync(baseType);
-
-                // Поиск существующей структуры
-                var existingStructure = existingStructures
-                    .FirstOrDefault(s => s.Name == property.Name);
-
-                if (existingStructure != null)
-                {
-                    // Обновление существующей структуры
-                    existingStructure.IdType = typeId;
-                    existingStructure.AllowNotNull = isRequired;
-                    existingStructure.IsArray = isArray;
-                    structuresToKeep.Add(existingStructure.Id);
-                }
-                else
-                {
-                    // Создание новой структуры
-                    var newStructure = new _RStructure
-                    {
-                        Id = _context.GetNextKey(),
-                        IdScheme = scheme.Id,
-                        Name = property.Name,
-                        IdType = typeId,
-                        AllowNotNull = isRequired,
-                        IsArray = isArray,
-                        Order = properties.ToList().IndexOf(property)
-                    };
-
-                    _context.Structures.Add(newStructure);
-                    structuresToKeep.Add(newStructure.Id);
-                }
-            }
+            // ✅ НОВАЯ ПАРАДИГМА: Рекурсивное создание структур для всех типов включая бизнес-классы  
+            await SyncStructuresRecursively(typeof(TProps), scheme.Id, null, existingStructures, structuresToKeep);
 
             // Удаление лишних структур (если strictDeleteExtra = true)
             if (strictDeleteExtra)
@@ -141,9 +112,84 @@ namespace redb.Core.Postgres.Providers
             return updatedStructures.Select(s => (IRedbStructure)RedbStructure.FromEntity(s)).ToList();
         }
 
+        /// <summary>
+        /// ✅ НОВАЯ ПАРАДИГМА: Рекурсивное создание структур для всех полей включая дочерние поля бизнес-классов
+        /// </summary>
+        private async Task SyncStructuresRecursively(Type type, long schemeId, long? parentId, List<_RStructure> existingStructures, List<long> structuresToKeep, HashSet<Type>? visitedTypes = null)
+        {
+            // Защита от циклических ссылок
+            visitedTypes ??= new HashSet<Type>();
+            if (visitedTypes.Contains(type)) return;
+            visitedTypes.Add(type);
+
+            // Получение свойств типа через рефлексию (исключаем поля с [JsonIgnore])
+            var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .Where(p => !p.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any())
+                .ToArray();
+            var nullabilityContext = new NullabilityInfoContext();
+
+            foreach (var property in properties)
+            {
+                var nullabilityInfo = nullabilityContext.Create(property);
+                var isArray = IsArrayType(property.PropertyType);
+                var baseType = isArray ? GetArrayElementType(property.PropertyType) : property.PropertyType;
+                
+                // Определяем обязательность: не nullable и не имеет Nullable<T>
+                var isRequired = nullabilityInfo.WriteState != NullabilityState.Nullable && 
+                                Nullable.GetUnderlyingType(baseType) == null;
+                
+                var typeId = await GetTypeIdForTypeAsync(baseType);
+                var structureName = property.Name; // ✅ БЕЗ префикса - только имя свойства
+
+                // Поиск существующей структуры с учетом родителя
+                var existingStructure = existingStructures
+                    .FirstOrDefault(s => s.Name == structureName && s.IdParent == parentId);
+
+                if (existingStructure != null)
+                {
+                    // Обновление существующей структуры
+                    existingStructure.IdType = typeId;
+                    existingStructure.AllowNotNull = isRequired;
+                    existingStructure.IsArray = isArray;
+                    structuresToKeep.Add(existingStructure.Id);
+                }
+                else
+                {
+                    // Создание новой структуры
+                    var newStructure = new _RStructure
+                    {
+                        Id = _context.GetNextKey(),
+                        IdScheme = schemeId,
+                        IdParent = parentId,  // ✅ Используем переданный parentId
+                        Name = structureName,
+                        IdType = typeId,
+                        AllowNotNull = isRequired,
+                        IsArray = isArray,
+                        Order = properties.ToList().IndexOf(property)
+                    };
+
+                    _context.Structures.Add(newStructure);
+                    existingStructures.Add(newStructure); // Добавляем в список для поиска
+                    structuresToKeep.Add(newStructure.Id);
+                }
+
+                // ✅ РЕКУРСИЯ: Если это бизнес-класс, создаем структуры для его дочерних полей
+                if (IsBusinessClass(baseType))
+                {
+                    // Получаем ID текущей структуры для передачи как parentId
+                    var currentStructureId = existingStructure?.Id ?? 
+                        existingStructures.Last(s => s.Name == structureName && s.IdParent == parentId).Id;
+                    
+                    await SyncStructuresRecursively(baseType, schemeId, currentStructureId, existingStructures, structuresToKeep, visitedTypes);
+                }
+            }
+            
+            visitedTypes.Remove(type);
+        }
+
         private async Task<IRedbScheme> SyncSchemeAsync<TProps>(string? schemeName = null, string? alias = null, bool strictDeleteExtra = true) where TProps : class
         {
-            var scheme = await EnsureSchemeFromTypeAsync<TProps>(schemeName, alias);
+            var scheme = await EnsureSchemeFromTypeAsync(schemeName, alias);
             await SyncStructuresFromTypeAsync<TProps>(scheme, strictDeleteExtra);
             return scheme;
         }
@@ -156,7 +202,7 @@ namespace redb.Core.Postgres.Providers
             var alias = attr?.Alias;
             
             // Используем имя класса как имя схемы, strictDeleteExtra = true
-            return await SyncSchemeAsync<TProps>(schemeName: null, alias: alias, strictDeleteExtra: true);
+            return await SyncSchemeAsync<TProps>(typeof(TProps).Name, alias: alias, strictDeleteExtra: true);
         }
 
         /// <summary>
@@ -227,21 +273,38 @@ namespace redb.Core.Postgres.Providers
         
         private async Task<string> MapCSharpTypeToRedbTypeAsync(Type csharpType)
         {
+
+            
             // Инициализируем кеш маппинга из БД если еще не загружен
             if (_csharpToRedbTypeCache == null)
             {
+
                 await InitializeCSharpToRedbTypeMappingAsync();
             }
 
-            // Ищем точное соответствие
-            if (_csharpToRedbTypeCache!.TryGetValue(csharpType, out var exactMatch))
-                return exactMatch;
-
             // 🚀 ИСПРАВЛЕНИЕ: Правильная проверка дженериков RedbObject<>
             if (csharpType.IsGenericType && csharpType.GetGenericTypeDefinition() == typeof(RedbObject<>))
+            {
+
                 return "Object";
+            }
+
+            // ✅ НОВАЯ ПАРАДИГМА: Бизнес-классы (не примитивы) маппим в "Class"  
+            if (IsBusinessClass(csharpType))
+            {
+
+                return "Class";
+            }
+
+            // Ищем точное соответствие ПОСЛЕ новой логики
+            if (_csharpToRedbTypeCache!.TryGetValue(csharpType, out var exactMatch))
+            {
+
+                return exactMatch;
+            }
 
             // Если тип не найден, возвращаем String как fallback
+
             return "String";
         }
 
@@ -292,6 +355,69 @@ namespace redb.Core.Postgres.Providers
                 "Enum" => typeof(Enum),
                 _ => null // Неизвестный тип
             };
+        }
+
+        /// <summary>
+        /// ✅ НОВАЯ ПАРАДИГМА: Определить, является ли тип бизнес-классом (Class тип)
+        /// </summary>
+        private static bool IsBusinessClass(Type csharpType)
+        {
+            // 🔍 ДИАГНОСТИКА
+
+            
+            // Примитивные типы - НЕ бизнес-классы
+            if (csharpType.IsPrimitive || csharpType == typeof(string) || csharpType == typeof(decimal)) 
+            {
+
+                return false;
+            }
+
+            // Системные типы - НЕ бизнес-классы  
+            if (csharpType == typeof(DateTime) || csharpType == typeof(Guid) || csharpType == typeof(TimeSpan) || csharpType == typeof(byte[]))
+            {
+
+                return false;
+            }
+
+            // Nullable типы - проверяем базовый тип
+            if (Nullable.GetUnderlyingType(csharpType) != null)
+            {
+
+                return false;
+            }
+
+            // Массивы и коллекции - НЕ бизнес-классы
+            if (csharpType.IsArray || IsArrayType(csharpType))
+            {
+
+                return false;
+            }
+
+            // RedbObject<> - НЕ бизнес-класс (это ссылка) 
+            if (csharpType.IsGenericType && csharpType.GetGenericTypeDefinition() == typeof(RedbObject<>))
+            {
+
+                return false;
+            }
+
+            // Енумы - НЕ бизнес-классы
+            if (csharpType.IsEnum)
+            {
+
+                return false;
+            }
+
+            // Системные неймспейсы - НЕ бизнес-классы
+            if (csharpType.Namespace?.StartsWith("System") == true)
+            {
+
+                return false;
+            }
+
+            // Остальные пользовательские классы - ЭТО бизнес-классы
+            bool result = csharpType.IsClass;
+
+            return result;
         }
 
         // ===== НОВЫЕ МЕТОДЫ ИЗ КОНТРАКТА =====
@@ -468,6 +594,7 @@ namespace redb.Core.Postgres.Providers
 
         public async Task SyncStructuresFromTypeAsync<TProps>(long schemeId, bool strictDeleteExtra = true) where TProps : class
         {
+
             var scheme = await _context.Schemes.FirstAsync(s => s.Id == schemeId);
             await SyncStructuresFromTypeAsync<TProps>(RedbScheme.FromEntity(scheme), strictDeleteExtra);
         }
@@ -612,6 +739,164 @@ namespace redb.Core.Postgres.Providers
             
             // Приблизительная оценка: схема ~2KB, тип ~100B
             return schemeCount * 2048 + typeCount * 100;
+        }
+        
+        // ===== 🌳 НОВЫЕ МЕТОДЫ ДЛЯ РАБОТЫ С ДЕРЕВОМ СТРУКТУР =====
+        
+        /// <summary>
+        /// 🌳 Получение полного дерева структур схемы
+        /// </summary>
+        public async Task<List<StructureTreeNode>> GetStructureTreeAsync(long schemeId)
+        {
+            // Проверяем кеш
+            if (_structureTreeCache.TryGetValue(schemeId, out var cachedTree))
+            {
+                return cachedTree;
+            }
+            
+            // Загружаем схему со структурами
+            var scheme = await GetSchemeByIdAsync(schemeId);
+            if (scheme == null)
+            {
+                return new List<StructureTreeNode>();
+            }
+            
+            // Строим дерево из плоского списка
+            var tree = StructureTreeBuilder.BuildFromFlat(scheme.Structures.ToList());
+            
+            // Кешируем результат
+            _structureTreeCache.TryAdd(schemeId, tree);
+            
+            return tree;
+        }
+        
+        /// <summary>
+        /// 🌿 Получение поддерева структур для конкретного родителя
+        /// </summary>
+        public async Task<List<StructureTreeNode>> GetSubtreeAsync(long schemeId, long? parentStructureId)
+        {
+            var cacheKey = (schemeId, parentStructureId);
+            
+            // Проверяем кеш поддеревьев
+            if (_subtreeCache.TryGetValue(cacheKey, out var cachedSubtree))
+            {
+                return cachedSubtree;
+            }
+            
+            // Получаем полное дерево
+            var fullTree = await GetStructureTreeAsync(schemeId);
+            
+            List<StructureTreeNode> subtree;
+            
+            if (parentStructureId == null)
+            {
+                // Корневые узлы
+                subtree = fullTree.Where(n => n.IsRoot).ToList();
+            }
+            else
+            {
+                // Ищем поддерево для конкретного родителя
+                var allNodes = StructureTreeBuilder.FlattenTree(fullTree);
+                var parentNode = allNodes.FirstOrDefault(n => n.Structure.Id == parentStructureId);
+                subtree = parentNode?.Children ?? new List<StructureTreeNode>();
+            }
+            
+            // Кешируем поддерево
+            _subtreeCache.TryAdd(cacheKey, subtree);
+            
+            return subtree;
+        }
+        
+        /// <summary>
+        /// 📋 Получение только прямых дочерних структур (плоский список)
+        /// </summary>
+        public async Task<List<IRedbStructure>> GetChildrenStructuresAsync(long schemeId, long parentStructureId)
+        {
+            var subtree = await GetSubtreeAsync(schemeId, parentStructureId);
+            return subtree.Select(n => n.Structure).ToList();
+        }
+        
+        /// <summary>
+        /// 🔍 Поиск узла дерева по ID структуры
+        /// </summary>
+        public async Task<StructureTreeNode?> FindStructureNodeAsync(long schemeId, long structureId)
+        {
+            var tree = await GetStructureTreeAsync(schemeId);
+            var allNodes = StructureTreeBuilder.FlattenTree(tree);
+            return allNodes.FirstOrDefault(n => n.Structure.Id == structureId);
+        }
+        
+        /// <summary>
+        /// 🔍 Поиск узла дерева по пути (например "Address1.Details.Floor")
+        /// </summary>
+        public async Task<StructureTreeNode?> FindStructureByPathAsync(long schemeId, string path)
+        {
+            var tree = await GetStructureTreeAsync(schemeId);
+            return StructureTreeBuilder.FindNodeByPath(tree, path);
+        }
+        
+        /// <summary>
+        /// 📊 Получение дерева в JSON формате для диагностики
+        /// </summary>
+        public async Task<JsonElement> GetStructureTreeJsonAsync(long schemeId)
+        {
+            var sql = "SELECT get_scheme_structure_tree(@schemeId)";
+            var result = await _context.Database.SqlQueryRaw<string>(sql, 
+                new { schemeId }).FirstOrDefaultAsync();
+                
+            if (string.IsNullOrEmpty(result))
+            {
+                return JsonSerializer.SerializeToElement("[]");
+            }
+            
+            return JsonSerializer.SerializeToElement(result);
+        }
+        
+        /// <summary>
+        /// 🧪 Валидация дерева структур на соответствие C# типу
+        /// </summary>
+        public async Task<TreeDiagnosticReport> ValidateStructureTreeAsync<TProps>(long schemeId) where TProps : class
+        {
+            var tree = await GetStructureTreeAsync(schemeId);
+            return StructureTreeBuilder.DiagnoseTree(tree, typeof(TProps));
+        }
+        
+        /// <summary>
+        /// 🧹 Очистка кеша дерева структур
+        /// </summary>
+        public void InvalidateStructureTreeCache(long schemeId)
+        {
+            _structureTreeCache.TryRemove(schemeId, out _);
+            
+            // Удаляем все связанные поддеревья
+            var keysToRemove = _subtreeCache.Keys.Where(k => k.Item1 == schemeId).ToList();
+            foreach (var key in keysToRemove)
+            {
+                _subtreeCache.TryRemove(key, out _);
+            }
+        }
+        
+        /// <summary>
+        /// 📊 Статистика кеша дерева структур
+        /// </summary>
+        public (int TreesCount, int SubtreesCount, long MemoryEstimate) GetStructureTreeCacheStats()
+        {
+            var treesCount = _structureTreeCache.Count;
+            var subtreesCount = _subtreeCache.Count;
+            
+            // Приблизительная оценка: каждое дерево ~1KB, каждое поддерево ~200B
+            var memoryEstimate = treesCount * 1024 + subtreesCount * 200;
+            
+            return (treesCount, subtreesCount, memoryEstimate);
+        }
+        
+        /// <summary>
+        /// 🔧 Проверка существования дочерних структур
+        /// </summary>
+        public async Task<bool> HasChildrenStructuresAsync(long schemeId, long structureId)
+        {
+            var children = await GetSubtreeAsync(schemeId, structureId);
+            return children.Any();
         }
     }
 }

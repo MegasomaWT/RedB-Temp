@@ -80,6 +80,12 @@ public interface IRedbQueryable<TProps> where TProps : class, new()
     /// Получить уникальные значения (по всем полям объекта)
     /// </summary>
     IRedbQueryable<TProps> Distinct();
+    
+    /// <summary>
+    /// Настроить максимальную глубину рекурсии для сложных запросов ($and/$or/$not)
+    /// По умолчанию: 10 уровней
+    /// </summary>
+    IRedbQueryable<TProps> WithMaxRecursionDepth(int depth);
 }
 
 /// <summary>

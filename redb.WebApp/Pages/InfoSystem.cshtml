@@ -1,0 +1,116 @@
+﻿@page
+@model InfoSystem
+@using redb.Core.Utils;
+@using redb.WebApp.DataModels;
+
+@{
+    ViewData["Title"] = "System Info";
+}
+
+<table class="tableInfo">
+    <tr>
+        <td><b>Sql Info</b></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>Instance:</td>
+        <td>@Model.InfoView.dbType</td>
+    </tr>
+    <tr>
+        <td>Version:</td>
+        <td>@Model.InfoView.dbVersion</td>
+    </tr>
+    <tr>
+        <td>Migration:</td>
+        <td>@Model.InfoView.dbMigration</td>
+    </tr>
+    <tr>
+        <td>&nbsp;<redB>redB</redB> Size:</td>
+        <td>@Model.InfoView.dbSize byte</td>
+    </tr>
+    <tr>
+        <td colspan="2">
+            <div class="splitter">
+            </div>
+        </td>
+    </tr>
+    <tr>
+        <td><b>Environment</b></td>
+        <td></td>
+    </tr>
+    <tr>
+        <td>language:</td>
+        <td><b>C#</b></td>
+    </tr>
+    <tr>
+        <td>Addons:</td>
+        <td><addons>EF Core, Linq, Lyambda, Razor, MVC, UI DevExtreme, webApi, DI, JQuery, Docker and etc...</addons></td>
+    </tr>
+
+    @{
+        foreach (KeyValuePair<String, String> entry in Model.EnvironmentInfo)
+        {
+            <tr>
+                <td>@entry.Key:</td>
+                <td>@entry.Value</td>
+            </tr>
+        }
+    }
+    <tr>
+        <td colspan="2">
+            <div class="splitter">
+            </div>
+        </td>
+    </tr>
+    <tr>
+        <td><b>OS Info</b></td>
+        <td></td>
+    </tr>
+    @{
+        foreach (KeyValuePair<String, String> entry in Model.OsInfo)
+        {
+            <tr>
+                <td>@entry.Key:</td>
+                <td>@entry.Value</td>
+            </tr>
+        }
+    }
+    <tr>
+        <td colspan="2">
+            <div class="splitter">
+            </div>
+        </td>
+    </tr>
+    <tr>
+        <td><b>Culture Info</b></td>
+        <td></td>
+    </tr>
+    @{
+        foreach (KeyValuePair<String, String> entry in Model.CultureInfo)
+        {
+            <tr>
+                <td>@entry.Key:</td>
+                <td>@entry.Value</td>
+            </tr>
+        }
+    }
+    @* example extensions for IEnumerable *@
+    @*
+    <tr>
+        <td colspan="2">
+            <div class="splitter">
+            </div>
+        </td>
+    </tr>
+    <tr>
+        <td><b>Device Info</b></td>
+        <td>
+        </td>
+    </tr>
+    @{
+        System.Text.StringBuilder htmlContentDeviceInfo = new();
+        Model.DeviceInfo.ToDictionary().forEach<String, String>((k, v) => htmlContentDeviceInfo.Append($"<tr><td>{k}:</td><td>{v}</td></tr>"));
+    }
+    @Html.Raw(htmlContentDeviceInfo.ToString())
+    *@
+</table>

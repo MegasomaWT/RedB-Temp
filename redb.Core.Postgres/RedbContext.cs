@@ -422,9 +422,16 @@ public partial class RedbContext(DbContextOptions<RedbContext> options) : Core.R
 
             entity.ToTable("_users");
 
+            entity.HasIndex(e => e.Name, "_users__name_key").IsUnique();
+
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
                 .HasColumnName("_id");
+            entity.Property(e => e.CodeGuid).HasColumnName("_code_guid");
+            entity.Property(e => e.CodeInt).HasColumnName("_code_int");
+            entity.Property(e => e.CodeString)
+                .HasMaxLength(250)
+                .HasColumnName("_code_string");
             entity.Property(e => e.DateDismiss)
                 .HasColumnType("timestamp without time zone")
                 .HasColumnName("_date_dismiss");
@@ -438,16 +445,22 @@ public partial class RedbContext(DbContextOptions<RedbContext> options) : Core.R
             entity.Property(e => e.Enabled)
                 .HasDefaultValue(true)
                 .HasColumnName("_enabled");
+            entity.Property(e => e.Hash).HasColumnName("_hash");
+            entity.Property(e => e.Key).HasColumnName("_key");
             entity.Property(e => e.Login)
                 .HasMaxLength(250)
                 .HasColumnName("_login");
             entity.Property(e => e.Name)
                 .HasMaxLength(250)
                 .HasColumnName("_name");
+            entity.Property(e => e.Note)
+                .HasMaxLength(1000)
+                .HasColumnName("_note");
             entity.Property(e => e.Password).HasColumnName("_password");
             entity.Property(e => e.Phone)
                 .HasMaxLength(250)
                 .HasColumnName("_phone");
+
         });
 
         modelBuilder.Entity<_RUsersRole>(entity =>
@@ -511,7 +524,7 @@ public partial class RedbContext(DbContextOptions<RedbContext> options) : Core.R
         {
             entity.HasKey(e => e.Id).HasName("pk__values");
 
-            entity.ToTable("_values");
+            entity.ToTable("_values", tb => tb.HasComment("Таблица хранения значений полей объектов. Поддерживает реляционные массивы всех типов (простых и Class полей) через _array_parent_id и _array_index"));
 
             entity.HasIndex(e => e.Boolean, "IX__values__Boolean").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
 
@@ -525,16 +538,33 @@ public partial class RedbContext(DbContextOptions<RedbContext> options) : Core.R
 
             entity.HasIndex(e => e.String, "IX__values__String").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
 
+            entity.HasIndex(e => e.ArrayIndex, "IX__values__array_index").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
+
+            entity.HasIndex(e => e.ArrayParentId, "IX__values__array_parent_id").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
+
+            entity.HasIndex(e => new { e.ArrayParentId, e.ArrayIndex }, "IX__values__array_parent_index").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
+
             entity.HasIndex(e => e.IdObject, "IX__values__objects").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
 
             entity.HasIndex(e => e.IdStructure, "IX__values__structures").HasAnnotation("Npgsql:StorageParameter:deduplicate_items", "true");
 
-            entity.HasIndex(e => new { e.IdStructure, e.IdObject }, "ix__values_so").IsUnique();
+            entity.HasIndex(e => new { e.IdStructure, e.IdObject }, "UIX__values__structure_object")
+                .IsUnique()
+                .HasFilter("(_array_index IS NULL)");
+
+            entity.HasIndex(e => new { e.IdStructure, e.IdObject, e.ArrayIndex }, "UIX__values__structure_object_array_index")
+                .IsUnique()
+                .HasFilter("(_array_index IS NOT NULL)");
 
             entity.Property(e => e.Id)
                 .ValueGeneratedNever()
                 .HasColumnName("_id");
-            entity.Property(e => e.Array).HasColumnName("_array");
+            entity.Property(e => e.ArrayIndex)
+                .HasComment("Позиция элемента в массиве (0,1,2...). NULL для обычных (не-массивных) полей. Используется для всех типов массивов: простых типов и Class полей")
+                .HasColumnName("_array_index");
+            entity.Property(e => e.ArrayParentId)
+                .HasComment("ID родительского элемента для элементов массива. NULL для обычных (не-массивных) полей и корневых элементов массива")
+                .HasColumnName("_array_parent_id");
             entity.Property(e => e.Boolean).HasColumnName("_boolean");
             entity.Property(e => e.ByteArray).HasColumnName("_bytearray");
             entity.Property(e => e.DateTime)
@@ -545,9 +575,12 @@ public partial class RedbContext(DbContextOptions<RedbContext> options) : Core.R
             entity.Property(e => e.IdObject).HasColumnName("_id_object");
             entity.Property(e => e.IdStructure).HasColumnName("_id_structure");
             entity.Property(e => e.Long).HasColumnName("_long");
-            entity.Property(e => e.String)
-                .HasMaxLength(850)
-                .HasColumnName("_string");
+            entity.Property(e => e.String).HasColumnName("_string");
+
+            entity.HasOne(d => d.ArrayParent).WithMany(p => p.InverseArrayParent)
+                .HasForeignKey(d => d.ArrayParentId)
+                .OnDelete(DeleteBehavior.Cascade)
+                .HasConstraintName("fk__values__array_parent");
 
             entity.HasOne(d => d.ObjectNavigation).WithMany(p => p.Values)
                 .HasForeignKey(d => d.IdObject)

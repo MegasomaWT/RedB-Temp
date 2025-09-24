@@ -26,20 +26,20 @@ namespace redb.Core.Postgres
             _cacheSize = size;
         }
 
-        // Метод для получения следующего ключа
+        // Метод для получения следующего ключа (ПОЛНОСТЬЮ СИНХРОННЫЙ)
         public override long GetNextKey()
         {
             // Пытаемся получить ключ из кэша
             if (_keyCache.TryDequeue(out long key))
             {
-                // Проверяем, нужно ли пополнить кэш (в фоновом режиме)
+                // Проверяем, нужно ли пополнить кэш (СИНХРОННО!)
                 int currentCount = _keyCache.Count;
                 int threshold = (int)(_cacheSize * REFILL_THRESHOLD);
 
                 if (currentCount <= threshold && !_isRefilling)
                 {
-                    // Запускаем асинхронное пополнение кэша в фоновом режиме
-                    _ = Task.Run(async () => await RefillCacheAsync());
+                    // ✅ СИНХРОННОЕ пополнение кэша - никаких Task.Run!
+                    RefillCacheSync();
                 }
 
                 return key;
@@ -57,14 +57,16 @@ namespace redb.Core.Postgres
             return GenerateSingleKey();
         }
 
-        // Асинхронный метод для пополнения кэша
-        private async Task RefillCacheAsync()
+        // ❌ УДАЛЯЕМ асинхронный метод - заменяем синхронным!
+
+        // Синхронный метод для пополнения кэша (ЕДИНСТВЕННЫЙ!)
+        private void RefillCacheSync()
         {
             if (_isRefilling)
                 return; // Уже идет пополнение
 
             // Блокировка для предотвращения одновременного пополнения кэша
-            if (!await _cacheLock.WaitAsync(0))
+            if (!_cacheLock.Wait(0))
             {
                 return; // Кто-то уже пополняет кэш
             }
@@ -82,43 +84,7 @@ namespace redb.Core.Postgres
                     return;
                 }
 
-                // Получаем новые ключи из последовательности асинхронно
-                var keys = await GenerateKeysAsync(keysToGenerate);
-
-                // Добавляем ключи в кэш
-                foreach (var newKey in keys)
-                {
-                    _keyCache.Enqueue(newKey);
-                }
-            }
-            finally
-            {
-                _isRefilling = false;
-                _cacheLock.Release();
-            }
-        }
-
-        // Синхронный метод для пополнения кэша (для случаев, когда кэш пуст)
-        private void RefillCacheSync()
-        {
-            // Блокировка для предотвращения одновременного пополнения кэша
-            if (!_cacheLock.Wait(0))
-            {
-                return; // Кто-то уже пополняет кэш
-            }
-
-            try
-            {
-                // Проверяем еще раз, может быть кэш уже пополнили
-                int currentCount = _keyCache.Count;
-                int keysToGenerate = _cacheSize - currentCount;
-
-                if (keysToGenerate <= 0)
-                {
-                    return;
-                }
-
-                // Получаем новые ключи из последовательности
+                // Получаем новые ключи из последовательности (СИНХРОННО!)
                 var keys = GenerateKeys(keysToGenerate);
 
                 // Добавляем ключи в кэш
@@ -129,6 +95,7 @@ namespace redb.Core.Postgres
             }
             finally
             {
+                _isRefilling = false;
                 _cacheLock.Release();
             }
         }
@@ -148,13 +115,7 @@ namespace redb.Core.Postgres
             return keys;
         }
 
-        // Метод для получения нескольких ключей из последовательности (асинхронный)
-        private async Task<List<long>> GenerateKeysAsync(int count)
-        {
-            var sql = $"SELECT nextval('{SEQUENCE_NAME}') AS \"Value\" FROM generate_series(1, {count})";
-            var keys = await Database.SqlQueryRaw<long>(sql).ToListAsync();
-            return keys;
-        }
+        // ❌ УДАЛЯЕМ асинхронный GenerateKeysAsync - используем только синхронный GenerateKeys!
 
         /// <summary>
         /// Получает указанное количество ключей напрямую из последовательности БД (минуя кэш)
@@ -186,49 +147,19 @@ namespace redb.Core.Postgres
         }
 
         // ==========================
-        // Асинхронные варианты
+        // Асинхронные варианты (ОБЕРТКИ НАД СИНХРОННЫМИ!)
         // ==========================
 
-        public override async Task<long> GetNextKeyAsync()
+        public override Task<long> GetNextKeyAsync()
         {
-            // Быстрая попытка из кэша (синхронно)
-            if (_keyCache.TryDequeue(out long key))
-            {
-                // Проверяем, нужно ли пополнить кэш в фоновом режиме
-                int currentCount = _keyCache.Count;
-                int threshold = (int)(_cacheSize * REFILL_THRESHOLD);
-
-                if (currentCount <= threshold && !_isRefilling)
-                {
-                    // Запускаем асинхронное пополнение кэша в фоновом режиме
-                    _ = Task.Run(async () => await RefillCacheAsync());
-                }
-
-                return key;
-            }
-
-            // Если кэш пуст — асинхронно пополнить и взять ключ
-            await RefillCacheAsync();
-            if (_keyCache.TryDequeue(out key))
-                return key;
-
-            // Запасной путь — напрямую из БД
-            var val = await Database.SqlQueryRaw<long>($"SELECT nextval('{SEQUENCE_NAME}') AS \"Value\"").FirstAsync();
-            return val;
+            // ✅ ПРОСТАЯ ОБЕРТКА - вызываем синхронный метод
+            return Task.FromResult(GetNextKey());
         }
 
-        public override async Task<List<long>> GetKeysBatchAsync(int count)
+        public override Task<List<long>> GetKeysBatchAsync(int count)
         {
-            if (count <= 0)
-                throw new ArgumentException("Количество ключей должно быть больше 0", nameof(count));
-
-            if (count == 1)
-                return new List<long> { await GetNextKeyAsync() };
-
-            // Прямой запрос к последовательности (без кэша)
-            var sql = $"SELECT nextval('{SEQUENCE_NAME}') AS \"Value\" FROM generate_series(1, {count})";
-            var list = await Database.SqlQueryRaw<long>(sql).ToListAsync();
-            return list;
+            // ✅ ПРОСТАЯ ОБЕРТКА - вызываем синхронный метод
+            return Task.FromResult(GetKeysBatch(count));
         }
     }
 }

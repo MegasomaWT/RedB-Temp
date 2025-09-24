@@ -44,5 +44,36 @@ namespace redb.Core.Models.Users
         /// Если указан пустой массив - все роли убираются
         /// </summary>
         public long[]? RoleIds { get; set; }
+        
+        // === НОВЫЕ РАСШИРЕННЫЕ ПОЛЯ ===
+        
+        /// <summary>
+        /// Новый дополнительный ключ (если null - не изменяется)
+        /// </summary>
+        public long? Key { get; set; }
+        
+        /// <summary>
+        /// Новый целочисленный код (если null - не изменяется)
+        /// </summary>
+        public long? CodeInt { get; set; }
+        
+        /// <summary>
+        /// Новый строковый код (если null - не изменяется)
+        /// Если пустая строка - код очищается
+        /// </summary>
+        public string? CodeString { get; set; }
+        
+        /// <summary>
+        /// Новый GUID код (если null - не изменяется)
+        /// </summary>
+        public Guid? CodeGuid { get; set; }
+        
+        /// <summary>
+        /// Новая заметка (если null - не изменяется)
+        /// Если пустая строка - заметка очищается
+        /// </summary>
+        public string? Note { get; set; }
+        
+        // Hash НЕ добавляем в UpdateUserRequest - он пересчитывается автоматически!
     }
 }

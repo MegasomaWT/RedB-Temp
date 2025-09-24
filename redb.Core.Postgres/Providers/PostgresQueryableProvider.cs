@@ -1,15 +1,16 @@
 using redb.Core.Providers;
 using redb.Core.Query;
+using redb.Core.Query.QueryExpressions;
 using redb.Core.Postgres.Query;
 using redb.Core.Serialization;
 using Microsoft.Extensions.Logging;
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using redb.Core.Models.Contracts;
 using redb.Core.Models.Configuration;
 using redb.Core.Models.Security;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace redb.Core.Postgres.Providers
 {
@@ -42,359 +43,408 @@ namespace redb.Core.Postgres.Providers
         }
 
         // ===== МЕТОДЫ ИЗ КОНТРАКТА IQueryableProvider =====
-        
-        public IRedbQueryable<TProps> Query<TProps>(IRedbScheme scheme, IRedbUser user) where TProps : class, new()
-        {
-            return QueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
 
-        public IRedbQueryable<TProps> Query<TProps>(IRedbScheme scheme) where TProps : class, new()
-        {
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
+        // ===== ДРЕВОВИДНЫЕ LINQ-ЗАПРОСЫ =====
 
-        public async Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbScheme scheme, IRedbUser user) where TProps : class, new()
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>() where TProps : class, new()
         {
-            return QueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-
-        public async Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbScheme scheme) where TProps : class, new()
-        {
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        public async Task<IRedbQueryable<TProps>> QueryAsync<TProps>(string schemeName) where TProps : class, new()
-        {
-            var scheme = await _schemeSync.GetSchemeByNameAsync(schemeName);
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
-                throw new InvalidOperationException($"Схема '{schemeName}' не найдена");
-            
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
             var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            return TreeQueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
-        
+
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbUser user) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return TreeQueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        public ITreeQueryable<TProps> TreeQuery<TProps>() where TProps : class, new()
+        {
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return TreeQueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IRedbUser user) where TProps : class, new()
+        {
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return TreeQueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+        }
+
+        // ===== ДРЕВОВИДНЫЕ LINQ С ОГРАНИЧЕНИЕМ ПОДДЕРЕВА =====
+
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(long rootObjectId, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return TreeQueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObjectId, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQuery с nullable rootObject - удобнее для клиентского кода
+        /// </summary>
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbObject? rootObject, int? maxDepth = null) where TProps : class, new()
+        {
+            // Если rootObject = null, возвращаем пустой queryable (удобнее чем исключение)
+            if (rootObject == null)
+            {
+                var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                var effectiveUser = _securityContext.GetEffectiveUser();
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            var schemeResolved = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUserResolved = _securityContext.GetEffectiveUser();
+            return TreeQueryPrivate<TProps>(schemeResolved.Id, effectiveUserResolved.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObject.Id, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQuery с списком rootObjects - поиск среди потомков ЛЮБОГО из объектов
+        /// </summary>
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IEnumerable<IRedbObject> rootObjects, int? maxDepth = null) where TProps : class, new()
+        {
+            var rootList = rootObjects?.ToList() ?? new List<IRedbObject>();
+            
+            // Если список пустой, возвращаем пустой queryable (удобнее чем исключение)
+            if (!rootList.Any())
+            {
+                var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                var effectiveUser = _securityContext.GetEffectiveUser();
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            // Если один объект, используем обычный TreeQuery  
+            if (rootList.Count == 1)
+            {
+                return await TreeQueryAsync<TProps>(rootList.First(), maxDepth);
+            }
+
+            // Если несколько объектов, строим $or фильтр с $descendantsOf для каждого
+            var schemeResolved = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUserResolved = _securityContext.GetEffectiveUser();
+            return CreateMultiRootTreeQuery<TProps>(schemeResolved.Id, effectiveUserResolved.Id, _configuration.DefaultCheckPermissionsOnQuery, rootList, maxDepth);
+        }
+
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(long rootObjectId, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return TreeQueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObjectId, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQuery с nullable rootObject и пользователем
+        /// </summary>
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbObject? rootObject, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            // Если rootObject = null, возвращаем пустой queryable
+            if (rootObject == null)
+            {
+                var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            var schemeResolved = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return TreeQueryPrivate<TProps>(schemeResolved.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObject.Id, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQuery с списком rootObjects и пользователем
+        /// </summary>
+        public async Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IEnumerable<IRedbObject> rootObjects, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            var rootList = rootObjects?.ToList() ?? new List<IRedbObject>();
+            
+            // Если список пустой, возвращаем пустой queryable
+            if (!rootList.Any())
+            {
+                var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            // Если один объект, используем обычный TreeQuery  
+            if (rootList.Count == 1)
+            {
+                return await TreeQueryAsync<TProps>(rootList.First(), user, maxDepth);
+            }
+
+            // Если несколько объектов, строим составной запрос
+            var schemeResolved = await _schemeSync.GetSchemeByTypeAsync<TProps>();
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return CreateMultiRootTreeQuery<TProps>(schemeResolved.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery, rootList, maxDepth);
+        }
+
+        // ===== СИНХРОННЫЕ МЕТОДЫ ДЛЯ ДРЕВОВИДНЫХ LINQ С ОГРАНИЧЕНИЕМ ПОДДЕРЕВА =====
+
+        public ITreeQueryable<TProps> TreeQuery<TProps>(long rootObjectId, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUser = _securityContext.GetEffectiveUser();
+            return TreeQueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObjectId, maxDepth);
+        }
+
+                /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с nullable rootObject
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IRedbObject? rootObject, int? maxDepth = null) where TProps : class, new()
+        {
+            // Если rootObject = null, возвращаем пустой queryable
+            if (rootObject == null)
+            {
+                var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                var effectiveUser = _securityContext.GetEffectiveUser();
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            var schemeResolved = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUserResolved = _securityContext.GetEffectiveUser();
+            return TreeQueryPrivate<TProps>(schemeResolved.Id, effectiveUserResolved.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObject.Id, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с списком rootObjects
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IEnumerable<IRedbObject> rootObjects, int? maxDepth = null) where TProps : class, new()
+        {
+            var rootList = rootObjects?.ToList() ?? new List<IRedbObject>();
+            
+            // Если список пустой, возвращаем пустой queryable
+            if (!rootList.Any())
+            {
+                var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                var effectiveUser = _securityContext.GetEffectiveUser();
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            // Если один объект, используем обычный TreeQuery  
+            if (rootList.Count == 1)
+            {
+                return TreeQuery<TProps>(rootList.First(), maxDepth);
+            }
+
+            // Если несколько объектов, строим составной запрос
+            var schemeResolved = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            var effectiveUserResolved = _securityContext.GetEffectiveUser();
+            return CreateMultiRootTreeQuery<TProps>(schemeResolved.Id, effectiveUserResolved.Id, _configuration.DefaultCheckPermissionsOnQuery, rootList, maxDepth);
+        }
+
+        public ITreeQueryable<TProps> TreeQuery<TProps>(long rootObjectId, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (scheme == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return TreeQueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObjectId, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с nullable rootObject и пользователем
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IRedbObject? rootObject, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            // Если rootObject = null, возвращаем пустой queryable
+            if (rootObject == null)
+            {
+                var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            var schemeResolved = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return TreeQueryPrivate<TProps>(schemeResolved.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery, rootObject.Id, maxDepth);
+        }
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с списком rootObjects и пользователем
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IEnumerable<IRedbObject> rootObjects, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+        {
+            var rootList = rootObjects?.ToList() ?? new List<IRedbObject>();
+            
+            // Если список пустой, возвращаем пустой queryable
+            if (!rootList.Any())
+            {
+                var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+                if (scheme == null)
+                    throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+                return CreateEmptyTreeQuery<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
+            }
+
+            // Если один объект, используем обычный TreeQuery  
+            if (rootList.Count == 1)
+            {
+                return TreeQuery<TProps>(rootList.First(), user, maxDepth);
+            }
+
+            // Если несколько объектов, строим составной запрос
+            var schemeResolved = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
+            if (schemeResolved == null)
+                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
+
+            return CreateMultiRootTreeQuery<TProps>(schemeResolved.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery, rootList, maxDepth);
+        }
+
         public async Task<IRedbQueryable<TProps>> QueryAsync<TProps>() where TProps : class, new()
         {
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
+
             var effectiveUser = _securityContext.GetEffectiveUser();
             return QueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
-        
+
         public async Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbUser user) where TProps : class, new()
         {
             var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
+
             return QueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
-        
+
         public IRedbQueryable<TProps> Query<TProps>() where TProps : class, new()
         {
             var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
+
             var effectiveUser = _securityContext.GetEffectiveUser();
             return QueryPrivate<TProps>(scheme.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
-        
+
         public IRedbQueryable<TProps> Query<TProps>(IRedbUser user) where TProps : class, new()
         {
             var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
             if (scheme == null)
                 throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
+
             return QueryPrivate<TProps>(scheme.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
         }
 
         // ===== ПРИВАТНЫЕ МЕТОДЫ (низкоуровневый доступ) =====
-        
+
         private IRedbQueryable<TProps> QueryPrivate<TProps>(long schemeId, long? userId = null, bool checkPermissions = false) where TProps : class, new()
         {
             var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
             return queryProvider.CreateQuery<TProps>(schemeId, userId, checkPermissions);
         }
 
-        private async Task<IRedbQueryable<TProps>> QueryAsyncPrivate<TProps>(string? schemeName = null, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        private async Task<IRedbQueryable<TProps>> QueryAsyncPrivate<TProps>(long? userId = null, bool checkPermissions = false) where TProps : class, new()
         {
-            var scheme = await _schemeSync.EnsureSchemeFromTypeAsync<TProps>(schemeName);
+            var scheme = await _schemeSync.EnsureSchemeFromTypeAsync<TProps>();
             return QueryPrivate<TProps>(scheme.Id, userId, checkPermissions);
         }
 
-        private IRedbQueryable<TProps> QueryChildrenPrivate<TProps>(long schemeId, long parentId, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        // ===== ПРИВАТНЫЕ МЕТОДЫ ДЛЯ ДРЕВОВИДНЫХ LINQ =====
+
+        private ITreeQueryable<TProps> TreeQueryPrivate<TProps>(long schemeId, long? userId = null, bool checkPermissions = false, long? rootObjectId = null, int? maxDepth = null) where TProps : class, new()
         {
-            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
-            return queryProvider.CreateChildrenQuery<TProps>(schemeId, parentId, userId, checkPermissions);
+            var treeQueryProvider = new PostgresTreeQueryProvider(_context, _serializer, _logger);
+            return treeQueryProvider.CreateTreeQuery<TProps>(schemeId, userId, checkPermissions, rootObjectId, maxDepth);
         }
 
-        private IRedbQueryable<TProps> QueryDescendantsPrivate<TProps>(long schemeId, long parentId, int? maxDepth = null, long? userId = null, bool checkPermissions = false) where TProps : class, new()
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Создать пустой TreeQueryable (удобно когда rootObject = null)
+        /// Возвращает queryable который при выполнении даст пустой список
+        /// </summary>
+        private ITreeQueryable<TProps> CreateEmptyTreeQuery<TProps>(long schemeId, long? userId = null, bool checkPermissions = false) where TProps : class, new()
         {
-            var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth;
-            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
-            return queryProvider.CreateDescendantsQuery<TProps>(schemeId, parentId, actualMaxDepth, userId, checkPermissions);
+            var treeQueryProvider = new PostgresTreeQueryProvider(_context, _serializer, _logger);
+            
+            // ✅ ИСПРАВЛЕНИЕ: Создаем пустой TreeQueryable правильно, без приведения типов
+            var emptyTreeQuery = treeQueryProvider.CreateTreeQuery<TProps>(schemeId, userId, checkPermissions);
+            
+            // Добавляем фильтр который никогда не выполняется: WHERE 1=0
+            // ✅ ИСПРАВЛЕНИЕ: Where() возвращает IRedbQueryable, приводим к ITreeQueryable
+            var emptyQueryWithFilter = emptyTreeQuery.Where(x => false);
+            return (ITreeQueryable<TProps>)emptyQueryWithFilter;
         }
 
-        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ДОЧЕРНИМИ ОБЪЕКТАМИ =====
-        
-        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj) where TProps : class, new()
-        {
-            // LINQ принцип: null родитель → пустой результат без исключения
-            if (parentObj == null || parentObj.Id <= 0)
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj, IRedbUser user) where TProps : class, new()
-        {
-            // LINQ принцип: null родитель → пустой результат без исключения
-            if (parentObj == null || parentObj.Id <= 0)
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
-            return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject? parentObj) where TProps : class, new()
-        {
-            // LINQ принцип: null родитель → пустой результат без исключения
-            if (parentObj == null || parentObj.Id <= 0)
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryChildrenPrivate<TProps>(scheme.Id, parentObj.Id, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-
-        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ (РЕКУРСИВНО) =====
-        
-        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new()
-        {
-            // LINQ принцип: null родитель → пустой результат без исключения
-            if (parentObj == null || parentObj.Id <= 0)
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new()
-        {
-            // LINQ принцип: null родитель → пустой результат без исключения
-            if (parentObj == null || parentObj.Id <= 0)
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
-            return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new()
-        {
-            // LINQ принцип: null родитель → пустой результат без исключения
-            if (parentObj == null || parentObj.Id <= 0)
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-            
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryDescendantsPrivate<TProps>(scheme.Id, parentObj.Id, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-
-        // ===== BATCH МЕТОДЫ ДЛЯ РАБОТЫ С ДЕТЬМИ НЕСКОЛЬКИХ ОБЪЕКТОВ =====
-        
         /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей (автоматически определит схему по типу)
+        /// 🚀 ЗАКАЗЧИК: Создать TreeQueryable для поиска среди потомков ЛЮБОГО из списка rootObjects
+        /// Использует $or фильтр с $descendantsOf для каждого объекта
         /// </summary>
-        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
+        private ITreeQueryable<TProps> CreateMultiRootTreeQuery<TProps>(long schemeId, long? userId, bool checkPermissions, List<IRedbObject> rootObjects, int? maxDepth) where TProps : class, new()
         {
-            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
-            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            var treeQueryProvider = new PostgresTreeQueryProvider(_context, _serializer, _logger);
             
-            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
-            if (parentIds.Length == 0) 
+            // ✅ ПОЛНАЯ РЕАЛИЗАЦИЯ: Используем ParentIds для множественных корней
+            var parentIds = rootObjects.Select(obj => obj.Id).ToArray();
+            
+            // Создаем специальный контекст с множественными родителями
+            var multiRootContext = new TreeQueryContext<TProps>(schemeId, userId, checkPermissions, null, maxDepth)
             {
-                return CreateEmptyQueryable<TProps>();
-            }
+                ParentIds = parentIds  // ✅ ИСПОЛЬЗУЕМ НОВОЕ ПОЛЕ ParentIds[]
+            };
             
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-                
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryChildrenBatchPrivate<TProps>(scheme.Id, parentIds, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей с указанным пользователем
-        /// </summary>
-        public async Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user) where TProps : class, new()
-        {
-            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
-            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
+            // Создаем TreeQueryable с контекстом множественных родителей
+            var filterParser = new PostgresFilterExpressionParser();
+            var orderingParser = new PostgresOrderingExpressionParser();
             
-            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
-            if (parentIds.Length == 0) 
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-                
-            return QueryChildrenBatchPrivate<TProps>(scheme.Id, parentIds, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        /// <summary>
-        /// Синхронная версия запроса дочерних объектов нескольких родителей
-        /// </summary>
-        public IRedbQueryable<TProps> QueryChildren<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
-        {
-            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
-            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            
-            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
-            if (parentIds.Length == 0) 
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-                
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryChildrenBatchPrivate<TProps>(scheme.Id, parentIds, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-
-        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ НЕСКОЛЬКИХ ОБЪЕКТОВ =====
-        
-        /// <summary>
-        /// Создать типобезопасный запрос для всех потомков нескольких родителей (автоматически определит схему по типу)
-        /// </summary>
-        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
-        {
-            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
-            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            
-            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
-            if (parentIds.Length == 0) 
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-                
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryDescendantsBatchPrivate<TProps>(scheme.Id, parentIds, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        /// <summary>
-        /// Создать типобезопасный запрос для всех потомков нескольких родителей с указанным пользователем
-        /// </summary>
-        public async Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user, int? maxDepth = null) where TProps : class, new()
-        {
-            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
-            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            
-            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
-            if (parentIds.Length == 0) 
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = await _schemeSync.GetSchemeByTypeAsync<TProps>();
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-                
-            return QueryDescendantsBatchPrivate<TProps>(scheme.Id, parentIds, maxDepth, user.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-        
-        /// <summary>
-        /// Синхронная версия запроса потомков нескольких родителей
-        /// </summary>
-        public IRedbQueryable<TProps> QueryDescendants<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
-        {
-            if (parentObjs == null) throw new ArgumentNullException(nameof(parentObjs));
-            var parentIds = parentObjs.Where(obj => obj?.Id > 0).Select(obj => obj.Id).ToArray();
-            
-            // LINQ принцип: пустая коллекция возвращает пустой результат без исключения
-            if (parentIds.Length == 0) 
-            {
-                return CreateEmptyQueryable<TProps>();
-            }
-            
-            var scheme = _schemeSync.GetSchemeByTypeAsync<TProps>().Result;
-            if (scheme == null)
-                throw new InvalidOperationException($"Схема для типа '{typeof(TProps).Name}' не найдена");
-                
-            var effectiveUser = _securityContext.GetEffectiveUser();
-            return QueryDescendantsBatchPrivate<TProps>(scheme.Id, parentIds, maxDepth, effectiveUser.Id, _configuration.DefaultCheckPermissionsOnQuery);
-        }
-
-        // ===== ПРИВАТНЫЕ BATCH МЕТОДЫ =====
-        
-        private IRedbQueryable<TProps> QueryChildrenBatchPrivate<TProps>(long schemeId, long[] parentIds, long? userId = null, bool checkPermissions = false) where TProps : class, new()
-        {
-            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
-            return queryProvider.CreateChildrenBatchQuery<TProps>(schemeId, parentIds, userId, checkPermissions);
-        }
-        
-        private IRedbQueryable<TProps> QueryDescendantsBatchPrivate<TProps>(long schemeId, long[] parentIds, int? maxDepth = null, long? userId = null, bool checkPermissions = false) where TProps : class, new()
-        {
-            var actualMaxDepth = maxDepth ?? _configuration.DefaultLoadDepth;
-            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
-            return queryProvider.CreateDescendantsBatchQuery<TProps>(schemeId, parentIds, actualMaxDepth, userId, checkPermissions);
-        }
-        
-        /// <summary>
-        /// Создать пустой queryable для LINQ-совместимого поведения с пустыми коллекциями
-        /// </summary>
-        private IRedbQueryable<TProps> CreateEmptyQueryable<TProps>() where TProps : class, new()
-        {
-            var queryProvider = new PostgresQueryProvider(_context, _serializer, _logger);
-            var emptyQuery = queryProvider.CreateQuery<TProps>(0); // schemeId = 0 для пустого запроса
-            return emptyQuery.Take(0); // Limit = 0 гарантирует пустой результат без SQL запроса
+            return new PostgresTreeQueryable<TProps>(treeQueryProvider, multiRootContext, filterParser, orderingParser);
         }
 
     }

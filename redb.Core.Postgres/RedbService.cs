@@ -84,8 +84,8 @@ namespace redb.Core.Postgres
         // === ДЕЛЕГИРОВАНИЕ К ПРОВАЙДЕРАМ ===
 
         // ISchemeSyncProvider
-        public Task<IRedbScheme> EnsureSchemeFromTypeAsync<TProps>(string? schemeName = null, string? alias = null) where TProps : class
-            => _schemeSync.EnsureSchemeFromTypeAsync<TProps>(schemeName, alias);
+        public Task<IRedbScheme> EnsureSchemeFromTypeAsync<TProps>() where TProps : class
+            => _schemeSync.EnsureSchemeFromTypeAsync<TProps>();
         
         public Task<List<IRedbStructure>> SyncStructuresFromTypeAsync<TProps>(IRedbScheme scheme, bool strictDeleteExtra = true) where TProps : class
             => _schemeSync.SyncStructuresFromTypeAsync<TProps>(scheme, strictDeleteExtra);
@@ -234,21 +234,7 @@ namespace redb.Core.Postgres
 
         // ===== МЕТОДЫ ИЗ КОНТРАКТА IQueryableProvider =====
 
-        public IRedbQueryable<TProps> Query<TProps>(IRedbScheme scheme, IRedbUser user) where TProps : class, new()
-            => _queryProvider.Query<TProps>(scheme, user);
-
-        public IRedbQueryable<TProps> Query<TProps>(IRedbScheme scheme) where TProps : class, new()
-            => _queryProvider.Query<TProps>(scheme);
-
-        public Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbScheme scheme, IRedbUser user) where TProps : class, new()
-            => _queryProvider.QueryAsync<TProps>(scheme, user);
-
-        public Task<IRedbQueryable<TProps>> QueryAsync<TProps>(IRedbScheme scheme) where TProps : class, new()
-            => _queryProvider.QueryAsync<TProps>(scheme);
-        
-        public Task<IRedbQueryable<TProps>> QueryAsync<TProps>(string schemeName) where TProps : class, new()
-            => _queryProvider.QueryAsync<TProps>(schemeName);
-        
+       
         public Task<IRedbQueryable<TProps>> QueryAsync<TProps>() where TProps : class, new()
             => _queryProvider.QueryAsync<TProps>();
         
@@ -260,6 +246,84 @@ namespace redb.Core.Postgres
         
         public IRedbQueryable<TProps> Query<TProps>(IRedbUser user) where TProps : class, new()
             => _queryProvider.Query<TProps>(user);
+
+        // ===== ДРЕВОВИДНЫЕ LINQ-ЗАПРОСЫ (ДЕЛЕГИРОВАНИЕ) =====
+
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>() where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>();
+        
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbUser user) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(user);
+        
+        public ITreeQueryable<TProps> TreeQuery<TProps>() where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>();
+        
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IRedbUser user) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(user);
+
+        // ===== ДРЕВОВИДНЫЕ LINQ С ОГРАНИЧЕНИЕМ ПОДДЕРЕВА (ДЕЛЕГИРОВАНИЕ) =====
+
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(long rootObjectId, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(rootObjectId, maxDepth);
+        
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQueryAsync с nullable rootObject
+        /// </summary>
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbObject? rootObject, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(rootObject, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQueryAsync с списком rootObjects  
+        /// </summary>
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IEnumerable<IRedbObject> rootObjects, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(rootObjects, maxDepth);
+
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(long rootObjectId, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(rootObjectId, user, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQueryAsync с nullable rootObject и пользователем
+        /// </summary>
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IRedbObject? rootObject, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(rootObject, user, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: TreeQueryAsync с списком rootObjects и пользователем
+        /// </summary>
+        public Task<ITreeQueryable<TProps>> TreeQueryAsync<TProps>(IEnumerable<IRedbObject> rootObjects, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQueryAsync<TProps>(rootObjects, user, maxDepth);
+
+        // ===== СИНХРОННЫЕ ДРЕВОВИДНЫЕ LINQ С ОГРАНИЧЕНИЕМ ПОДДЕРЕВА (ДЕЛЕГИРОВАНИЕ) =====
+
+        public ITreeQueryable<TProps> TreeQuery<TProps>(long rootObjectId, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(rootObjectId, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с nullable rootObject
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IRedbObject? rootObject, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(rootObject, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с списком rootObjects
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IEnumerable<IRedbObject> rootObjects, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(rootObjects, maxDepth);
+
+        public ITreeQueryable<TProps> TreeQuery<TProps>(long rootObjectId, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(rootObjectId, user, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с nullable rootObject и пользователем
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IRedbObject? rootObject, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(rootObject, user, maxDepth);
+
+        /// <summary>
+        /// 🚀 ЗАКАЗЧИК: Синхронный TreeQuery с списком rootObjects и пользователем
+        /// </summary>
+        public ITreeQueryable<TProps> TreeQuery<TProps>(IEnumerable<IRedbObject> rootObjects, IRedbUser user, int? maxDepth = null) where TProps : class, new()
+            => _queryProvider.TreeQuery<TProps>(rootObjects, user, maxDepth);
 
         public Task<List<SupportedType>> GetSupportedTypesAsync()
             => _validationProvider.GetSupportedTypesAsync();
@@ -428,6 +492,13 @@ namespace redb.Core.Postgres
         public Task<bool> DeleteAsync<TProps>(IRedbObject<TProps> obj, IRedbUser user) where TProps : class, new()
             => _objectStorage.DeleteAsync<TProps>(obj, user);
 
+        // IObjectStorageProvider - массовые операции
+        public Task<List<long>> AddNewObjectsAsync<TProps>(List<IRedbObject<TProps>> objects) where TProps : class, new()
+            => _objectStorage.AddNewObjectsAsync(objects);
+
+        public Task<List<long>> AddNewObjectsAsync<TProps>(List<IRedbObject<TProps>> objects, IRedbUser user) where TProps : class, new()
+            => _objectStorage.AddNewObjectsAsync(objects, user);
+
 
 
         // ===== РЕАЛИЗАЦИЯ ITreeProvider =====
@@ -561,66 +632,8 @@ namespace redb.Core.Postgres
         /// </summary>
         public Task<IEnumerable<ITreeRedbObject>> GetPolymorphicDescendantsAsync(IRedbObject parentObj, IRedbUser user, int? maxDepth = null)
             => _treeProvider.GetPolymorphicDescendantsAsync(parentObj, user, maxDepth);
+            
 
-        // ===== НОВЫЕ МЕТОДЫ ДЛЯ РАБОТЫ С ДОЧЕРНИМИ ОБЪЕКТАМИ =====
-        
-        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj) where TProps : class, new()
-            => _queryProvider.QueryChildrenAsync<TProps>(parentObj);
-
-        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IRedbObject? parentObj, IRedbUser user) where TProps : class, new()
-            => _queryProvider.QueryChildrenAsync<TProps>(parentObj, user);
-
-        public IRedbQueryable<TProps> QueryChildren<TProps>(IRedbObject? parentObj) where TProps : class, new()
-            => _queryProvider.QueryChildren<TProps>(parentObj);
-
-        // ===== МЕТОДЫ ДЛЯ РАБОТЫ С ПОТОМКАМИ (РЕКУРСИВНО) =====
-        
-        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new()
-            => _queryProvider.QueryDescendantsAsync<TProps>(parentObj, maxDepth);
-
-        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IRedbObject? parentObj, IRedbUser user, int? maxDepth = null) where TProps : class, new()
-            => _queryProvider.QueryDescendantsAsync<TProps>(parentObj, user, maxDepth);
-
-        public IRedbQueryable<TProps> QueryDescendants<TProps>(IRedbObject? parentObj, int? maxDepth = null) where TProps : class, new()
-            => _queryProvider.QueryDescendants<TProps>(parentObj, maxDepth);
-
-        // ===== BATCH МЕТОДЫ ДЛЯ РАБОТЫ С НЕСКОЛЬКИМИ РОДИТЕЛЬСКИМИ ОБЪЕКТАМИ =====
-
-        /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей
-        /// </summary>
-        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
-            => _queryProvider.QueryChildrenAsync<TProps>(parentObjs);
-
-        /// <summary>
-        /// Создать типобезопасный запрос для дочерних объектов нескольких родителей с указанным пользователем
-        /// </summary>
-        public Task<IRedbQueryable<TProps>> QueryChildrenAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user) where TProps : class, new()
-            => _queryProvider.QueryChildrenAsync<TProps>(parentObjs, user);
-
-        /// <summary>
-        /// Синхронная версия запроса дочерних объектов нескольких родителей
-        /// </summary>
-        public IRedbQueryable<TProps> QueryChildren<TProps>(IEnumerable<IRedbObject> parentObjs) where TProps : class, new()
-            => _queryProvider.QueryChildren<TProps>(parentObjs);
-
-        /// <summary>
-        /// Создать типобезопасный запрос для всех потомков нескольких родителей
-        /// </summary>
-        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
-            => _queryProvider.QueryDescendantsAsync<TProps>(parentObjs, maxDepth);
-
-        /// <summary>
-        /// Создать типобезопасный запрос для всех потомков нескольких родителей с указанным пользователем
-        /// </summary>
-        public Task<IRedbQueryable<TProps>> QueryDescendantsAsync<TProps>(IEnumerable<IRedbObject> parentObjs, IRedbUser user, int? maxDepth = null) where TProps : class, new()
-            => _queryProvider.QueryDescendantsAsync<TProps>(parentObjs, user, maxDepth);
-
-        /// <summary>
-        /// Синхронная версия запроса потомков нескольких родителей
-        /// </summary>
-        public IRedbQueryable<TProps> QueryDescendants<TProps>(IEnumerable<IRedbObject> parentObjs, int? maxDepth = null) where TProps : class, new()
-            => _queryProvider.QueryDescendants<TProps>(parentObjs, maxDepth);
 
     }
 }

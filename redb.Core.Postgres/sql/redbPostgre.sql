@@ -4,11 +4,9 @@ DROP VIEW IF EXISTS v_objects_json;
 DROP VIEW IF EXISTS v_schemes_definition;
 DROP FUNCTION IF EXISTS get_scheme_definition;
 DROP FUNCTION IF EXISTS get_object_json;
--- Удаляем все существующие перегрузки search_objects_with_facets
-DROP FUNCTION IF EXISTS search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb);
-DROP FUNCTION IF EXISTS search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint);
-DROP FUNCTION IF EXISTS search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint, integer);
+DROP FUNCTION IF EXISTS search_objects_with_facets;
 DROP FUNCTION IF EXISTS get_facets;
+DROP FUNCTION IF EXISTS build_base_facet_conditions;
 DROP TABLE IF EXISTS _deleted_objects;
 DROP TABLE IF EXISTS _dependencies;
 DROP TABLE IF EXISTS _values;
@@ -33,7 +31,7 @@ DROP FUNCTION IF EXISTS auto_create_node_permissions;
 
 CREATE TABLE _types(
 	_id bigint NOT NULL,
-	_name varchar(250) NOT NULL,
+	_name varchar(250) NOT NULL UNIQUE,
 	_db_type varchar(250) NULL,
 	_type varchar(250) NULL,
     CONSTRAINT PK__types PRIMARY KEY (_id)
@@ -74,6 +72,12 @@ CREATE TABLE _users(
 	_date_register timestamp DEFAULT now() NOT NULL,
 	_date_dismiss timestamp NULL,
 	_enabled boolean DEFAULT true NOT NULL,
+	_key bigint NULL,
+	_code_int bigint NULL,
+	_code_string varchar(250) NULL,
+	_code_guid uuid NULL,
+	_note varchar(1000) NULL,
+	_hash uuid NULL,
     CONSTRAINT PK__users PRIMARY KEY (_id)
 );
 
@@ -119,8 +123,8 @@ CREATE TABLE _structures(
 	_default_value bytea NULL,
 	_default_editor text NULL,
     CONSTRAINT PK__structure PRIMARY KEY (_id),
-	CONSTRAINT IX__structures UNIQUE (_id_scheme,_name),
-    CONSTRAINT FK__structures__structures FOREIGN KEY (_id_parent) REFERENCES _structures (_id),
+	CONSTRAINT IX__structures UNIQUE (_id_scheme,_name,_id_parent),
+    CONSTRAINT FK__structures__structures FOREIGN KEY (_id_parent) REFERENCES _structures (_id) ON DELETE CASCADE,
     CONSTRAINT FK__structures__schemes FOREIGN KEY (_id_scheme) REFERENCES _schemes (_id),
     CONSTRAINT FK__structures__types FOREIGN KEY (_id_type) REFERENCES _types (_id),
     CONSTRAINT FK__structures__lists FOREIGN KEY (_id_list) REFERENCES _lists (_id)
@@ -205,12 +209,20 @@ CREATE TABLE _values(
 	_DateTime timestamp NULL,
 	_Boolean boolean NULL,
 	_ByteArray bytea NULL,
-    _Array text, --if _is_array in structure then json array in this field
+    -- Поля для реляционного хранения всех массивов (простых типов и Class полей)
+    _array_parent_id bigint NULL, -- Ссылка на родительский элемент массива (для вложенных Class)
+    _array_index int NULL, -- Позиция элемента в массиве [0,1,2,...]
     CONSTRAINT PK__values PRIMARY KEY (_id),
     CONSTRAINT FK__values__objects FOREIGN KEY (_id_object) REFERENCES _objects (_id) ON DELETE CASCADE,
     CONSTRAINT FK__values__structures FOREIGN KEY (_id_structure) REFERENCES _structures (_id) ON DELETE CASCADE,
-	CONSTRAINT IX__values_SO UNIQUE (_id_structure,_id_object)
+    CONSTRAINT FK__values__array_parent FOREIGN KEY (_array_parent_id) REFERENCES _values (_id) ON DELETE CASCADE
 ); 
+
+-- Комментарии к расширенной таблице _values для поддержки реляционных массивов
+COMMENT ON TABLE _values IS 'Таблица хранения значений полей объектов. Поддерживает реляционные массивы всех типов (простых и Class полей) через _array_parent_id и _array_index';
+COMMENT ON COLUMN _values._array_parent_id IS 'ID родительского элемента для элементов массива. NULL для обычных (не-массивных) полей и корневых элементов массива';
+COMMENT ON COLUMN _values._array_index IS 'Позиция элемента в массиве (0,1,2...). NULL для обычных (не-массивных) полей. Используется для всех типов массивов: простых типов и Class полей';
+
 
 
 CREATE TABLE _permissions(
@@ -254,6 +266,25 @@ CREATE INDEX IF NOT EXISTS "IX__values__Guid" ON _values (_Guid) WITH (deduplica
 CREATE INDEX IF NOT EXISTS "IX__values__Double" ON _values (_Double) WITH (deduplicate_items=True);
 CREATE INDEX IF NOT EXISTS "IX__values__DateTime" ON _values (_DateTime) WITH (deduplicate_items=True);
 CREATE INDEX IF NOT EXISTS "IX__values__Boolean" ON _values (_Boolean) WITH (deduplicate_items=True);
+-- Индексы для реляционных массивов всех типов
+CREATE INDEX IF NOT EXISTS "IX__values__array_parent_id" ON _values (_array_parent_id) WITH (deduplicate_items=True);
+CREATE INDEX IF NOT EXISTS "IX__values__array_index" ON _values (_array_index) WITH (deduplicate_items=True);
+CREATE INDEX IF NOT EXISTS "IX__values__array_parent_index" ON _values (_array_parent_id, _array_index) WITH (deduplicate_items=True);
+
+-- Уникальные индексы для обеспечения целостности данных
+-- Для обычных полей (не массивы): структура + объект должны быть уникальными
+CREATE UNIQUE INDEX IF NOT EXISTS "UIX__values__structure_object" 
+ON _values (_id_structure, _id_object) 
+WHERE _array_index IS NULL;
+
+-- Для элементов массивов: структура + объект + индекс массива должны быть уникальными
+CREATE UNIQUE INDEX IF NOT EXISTS "UIX__values__structure_object_array_index" 
+ON _values (_id_structure, _id_object, _array_index) 
+WHERE _array_index IS NOT NULL;
+
+-- Комментарии к созданным уникальным индексам
+COMMENT ON INDEX "UIX__values__structure_object" IS 'Обеспечивает уникальность: одно значение на структуру+объект для обычных полей (не массивы)';
+COMMENT ON INDEX "UIX__values__structure_object_array_index" IS 'Обеспечивает уникальность: один элемент на структуру+объект+позицию для элементов массивов';
 CREATE INDEX IF NOT EXISTS "IX__list_items__id_list" ON _list_items (_id_list) WITH (deduplicate_items=True);
 CREATE INDEX IF NOT EXISTS "IX__list_items__objects" ON _list_items (_id_object) WITH (deduplicate_items=True);
 CREATE INDEX IF NOT EXISTS "IX__objects__objects" ON _objects (_id_parent) WITH (deduplicate_items=True);
@@ -377,7 +408,8 @@ BEGIN
                 '_DateTime', _v._DateTime,
                 '_Boolean', _v._Boolean,
                 '_ByteArray', _v._ByteArray,
-                '_Array', _v._Array,  -- Добавлено: критично для массивов!
+                '_array_parent_id', _v._array_parent_id,  -- Для реляционных массивов
+                '_array_index', _v._array_index,  -- Для реляционных массивов
                 '_structure_name', _s._name,
                 '_structure_type', _t._db_type,
                 '_is_array', _s._is_array,
@@ -475,6 +507,7 @@ INSERT INTO _types (_id, _name, _db_type, _type) VALUES (-9223372036854775679, '
 INSERT INTO _types (_id, _name, _db_type, _type) VALUES (-9223372036854775678, 'FilePath', 'String', 'string');   -- Путь к файлу
 INSERT INTO _types (_id, _name, _db_type, _type) VALUES (-9223372036854775677, 'FileName', 'String', 'string');   -- Имя файла
 INSERT INTO _types (_id, _name, _db_type, _type) VALUES (-9223372036854775676, 'MimeType', 'String', 'string');   -- MIME тип
+INSERT INTO _types (_id, _name, _db_type, _type) VALUES (-9223372036854775675, 'Class', 'Guid', 'Object');   -- MIME тип
 
 -- Комментарии к дополнительным типам
 COMMENT ON TABLE _types IS 'Таблица типов данных REDB. Поддерживает базовые типы C# и дополнительные специализированные типы с валидацией';
@@ -685,7 +718,7 @@ BEGIN
         IF NEW._name !~ '^[a-zA-Z_][a-zA-Z0-9_]*$' THEN
             RAISE EXCEPTION 'Имя поля "_name" содержит недопустимые символы: %', NEW._name
                 USING ERRCODE = '23514',
-                      HINT = 'Имя может содержать только латинские буквы, цифры и символы подчеркивания. Должно начинаться с буквы или подчеркивания';
+                      HINT = 'Имя может содержать только латинские буквы, цифры, символы подчеркивания. Должно начинаться с буквы или подчеркивания';
         END IF;
         
         -- Проверка 4: Имя не должно быть пустым или содержать только пробелы
@@ -828,1380 +861,9 @@ COMMENT ON FUNCTION validate_scheme_name() IS 'Функция валидации
 COMMENT ON TRIGGER tr_validate_scheme_name ON _schemes IS 'Триггер проверяет корректность имен схем: правила именования классов C#, поддержка namespace через точки, зарезервированные слова';
 
 -- Функция для построения фасетов (фасетный поиск)
-CREATE OR REPLACE FUNCTION get_facets(scheme_id bigint)
-RETURNS jsonb 
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-BEGIN
-    RETURN (
-        SELECT jsonb_object_agg(s._name, COALESCE(facet_values, '[]'::jsonb))
-        FROM _structures s
-        LEFT JOIN (
-            SELECT 
-                v._id_structure, 
-                jsonb_agg(DISTINCT 
-                    CASE 
-                        -- Если это массив - работаем с _Array поле
-                        WHEN st._is_array = true AND v._Array IS NOT NULL THEN
-                            -- Для массивов возвращаем сам массив (фасеты покажут все элементы)
-                            CASE 
-                                WHEN t._name = 'Object' THEN 
-                                    -- Для массива объектов создаем массив {id, name} из ID
-                                    (SELECT jsonb_agg(
-                                        jsonb_build_object(
-                                            'id', elem::text::bigint,
-                                            'name', (SELECT _name FROM _objects WHERE _id = elem::text::bigint)
-                                        )
-                                    ) FROM jsonb_array_elements(v._Array::jsonb) AS elem
-                                     WHERE jsonb_typeof(elem) = 'number')
-                                ELSE 
-                                    -- Для массива примитивов возвращаем как есть
-                                    v._Array::jsonb
-                            END
-                        -- Обычные поля (не массивы)
-                        WHEN t._db_type = 'String' THEN to_jsonb(v._String)
-                        WHEN t._db_type = 'Long' THEN to_jsonb(v._Long)
-                        WHEN t._db_type = 'Guid' THEN to_jsonb(v._Guid)
-                        WHEN t._db_type = 'Double' THEN to_jsonb(v._Double)
-                        WHEN t._db_type = 'DateTime' THEN to_jsonb(v._DateTime)
-                        WHEN t._db_type = 'Boolean' THEN to_jsonb(v._Boolean)
-                        WHEN t._db_type = 'Object' THEN 
-                            CASE 
-                                WHEN v._Long IS NOT NULL THEN 
-                                    jsonb_build_object(
-                                        'id', v._Long,
-                                        'name', (SELECT _name FROM _objects WHERE _id = v._Long)
-                                    )
-                                ELSE NULL
-                            END
-                        WHEN t._db_type = 'ListItem' THEN
-                            CASE 
-                                WHEN v._Long IS NOT NULL THEN 
-                                    jsonb_build_object(
-                                        'id', v._Long,
-                                        'value', (SELECT _value FROM _list_items WHERE _id = v._Long)
-                                    )
-                                ELSE NULL
-                            END
-                        WHEN t._db_type = 'ByteArray' THEN 
-                            CASE 
-                                WHEN v._ByteArray IS NOT NULL THEN 
-                                    to_jsonb(encode(v._ByteArray, 'base64'))
-                                ELSE NULL
-                            END
-                        ELSE to_jsonb(v._String)
-                    END
-                ) FILTER (WHERE 
-                    CASE 
-                        WHEN st._is_array = true THEN v._Array IS NOT NULL
-                        WHEN t._db_type = 'String' THEN v._String IS NOT NULL
-                        WHEN t._db_type = 'Long' THEN v._Long IS NOT NULL
-                        WHEN t._db_type = 'Guid' THEN v._Guid IS NOT NULL
-                        WHEN t._db_type = 'Double' THEN v._Double IS NOT NULL
-                        WHEN t._db_type = 'DateTime' THEN v._DateTime IS NOT NULL
-                        WHEN t._db_type = 'Boolean' THEN v._Boolean IS NOT NULL
-                        WHEN t._db_type = 'Object' THEN v._Long IS NOT NULL
-                        WHEN t._db_type = 'ListItem' THEN v._Long IS NOT NULL
-                        WHEN t._db_type = 'ByteArray' THEN v._ByteArray IS NOT NULL
-                        ELSE FALSE
-                    END
-                ) as facet_values
-            FROM _values v
-            JOIN _objects o ON o._id = v._id_object
-            JOIN _structures st ON st._id = v._id_structure
-            JOIN _types t ON t._id = st._id_type
-            WHERE o._id_scheme = scheme_id
-              AND o._id NOT IN (SELECT _id FROM _deleted_objects) -- Исключаем удаленные объекты
-            GROUP BY v._id_structure
-        ) f ON f._id_structure = s._id
-        WHERE s._id_scheme = scheme_id
-    );
-END;
-$BODY$;
 
--- Комментарий к функции фасетов
-COMMENT ON FUNCTION get_facets(bigint) IS 'Функция построения фасетов для фасетного поиска. Возвращает все уникальные значения полей для объектов указанной схемы в формате JSON {field_name: [values]}. Поддержка массивов из поля _Array. Массивы объектов как [1,2,3] преобразуются в [{"id":1,"name":"..."}]';
 
--- Функция для получения объекта в JSON формате (улучшенная версия)
-CREATE OR REPLACE FUNCTION get_object_json(
-    object_id bigint,
-    max_depth integer DEFAULT 10
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-DECLARE
-    result_json jsonb;
-    object_exists boolean;
-    base_info jsonb;
-    properties_info jsonb;
-BEGIN
-    -- Проверяем глубину рекурсии
-    IF max_depth <= 0 THEN
-        RETURN jsonb_build_object('error', 'Max recursion depth reached');
-    END IF;
-    
-    -- Проверяем существование объекта
-    SELECT EXISTS(SELECT 1 FROM _objects WHERE _id = object_id) INTO object_exists;
-    
-    IF NOT object_exists THEN
-        RETURN jsonb_build_object('error', 'Object not found');
-    END IF;
-    
-    -- Собираем базовую информацию об объекте для корня JSON
-    SELECT jsonb_build_object(
-        'id', o._id,
-        'name', o._name,
-        'scheme_id', o._id_scheme,
-        'scheme_name', sc._name,
-        'parent_id', o._id_parent,
-        'owner_id', o._id_owner,
-        'who_change_id', o._id_who_change,
-        'date_create', o._date_create,
-        'date_modify', o._date_modify,
-        'date_begin', o._date_begin,
-        'date_complete', o._date_complete,
-        'key', o._key,
-        'code_int', o._code_int,
-        'code_string', o._code_string,
-        'code_guid', o._code_guid,
-        'note', o._note,
-        'bool', o._bool,
-        'hash', o._hash
-    ) INTO base_info
-    FROM _objects o
-    JOIN _schemes sc ON sc._id = o._id_scheme
-    WHERE o._id = object_id;
-    
-    -- Собираем свойства объекта из _values с поддержкой рекурсии и массивов
-    SELECT jsonb_object_agg(s._name, 
-        CASE 
-            -- Если это массив - обрабатываем поле _Array
-            WHEN s._is_array = true THEN
-                CASE 
-                    WHEN v._Array IS NOT NULL THEN
-                        CASE 
-                            -- Массив объектов - рекурсивно обрабатываем каждый ID
-                            WHEN t._name = 'Object' THEN
-                                (
-                                    SELECT jsonb_agg(get_object_json(array_element::text::bigint, max_depth - 1))
-                                    FROM jsonb_array_elements(v._Array::jsonb) AS array_element
-                                    WHERE array_element IS NOT NULL 
-                                      AND jsonb_typeof(array_element) = 'number'
-                                )
-                            -- Массив примитивов - возвращаем как есть
-                            ELSE v._Array::jsonb
-                        END
-                    ELSE '[]'::jsonb
-                END
-            -- Обычные поля (не массивы)
-            WHEN t._name = 'Object' THEN
-                CASE 
-                    WHEN v._Long IS NOT NULL THEN 
-                        get_object_json(v._Long, max_depth - 1)
-                    ELSE NULL
-                END
-            WHEN t._db_type = 'String' THEN to_jsonb(v._String)
-            WHEN t._db_type = 'Long' THEN to_jsonb(v._Long)
-            WHEN t._db_type = 'Guid' THEN to_jsonb(v._Guid)
-            WHEN t._db_type = 'Double' THEN to_jsonb(v._Double)
-            WHEN t._db_type = 'DateTime' THEN to_jsonb(v._DateTime)
-            WHEN t._db_type = 'Boolean' THEN to_jsonb(v._Boolean)
-            WHEN t._db_type = 'ListItem' THEN 
-                CASE 
-                    WHEN v._Long IS NOT NULL THEN 
-                        jsonb_build_object(
-                            'id', v._Long,
-                            'value', (SELECT _value FROM _list_items WHERE _id = v._Long)
-                        )
-                    ELSE NULL
-                END
-            WHEN t._db_type = 'ByteArray' THEN 
-                CASE 
-                    WHEN v._ByteArray IS NOT NULL THEN 
-                        to_jsonb(encode(v._ByteArray, 'base64'))
-                    ELSE NULL
-                END
-            ELSE NULL
-        END
-    ) INTO properties_info
-    FROM _values v
-    JOIN _structures s ON s._id = v._id_structure
-    JOIN _types t ON t._id = s._id_type
-    WHERE v._id_object = object_id;
-    
-    -- Объединяем базовую информацию с properties
-    result_json := base_info || jsonb_build_object('properties', COALESCE(properties_info, '{}'::jsonb));
-    
-    RETURN result_json;
-END;
-$BODY$;
-
-CREATE OR REPLACE VIEW v_objects_json AS
-SELECT 
-    _id as object_id,
-    get_object_json(_id, 10) as object_json
-FROM _objects
-ORDER BY _id;
-
--- Комментарий к функции получения объекта
-COMMENT ON FUNCTION get_object_json(bigint, integer) IS 'Функция получения объекта в JSON формате с базовыми полями в корне и свойствами в разделе properties. Поддержка рекурсии для связанных объектов и массивов из поля _Array. Массивы объектов хранятся как массив ID [1,2,3]';
-
--- ===== МОДУЛИ ДЛЯ МОДУЛЬНОЙ АРХИТЕКТУРЫ =====
-
--- Вспомогательная функция для форматирования JSON массива для оператора IN
--- Преобразует JSONB массив в строку значений для SQL IN clause
-CREATE OR REPLACE FUNCTION _format_json_array_for_in(
-    array_data jsonb
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    in_values text := '';
-    json_element jsonb;
-    first_item boolean := true;
-    element_text text;
-BEGIN
-    -- Проверяем что это массив
-    IF jsonb_typeof(array_data) != 'array' THEN
-        RAISE EXCEPTION 'Ожидается JSON массив, получен: %', jsonb_typeof(array_data);
-    END IF;
-    
-    -- Обрабатываем каждый элемент массива
-    FOR json_element IN SELECT value FROM jsonb_array_elements(array_data) LOOP
-        IF NOT first_item THEN
-            in_values := in_values || ', ';
-        END IF;
-        first_item := false;
-        
-        -- Форматируем элемент в зависимости от типа
-        CASE jsonb_typeof(json_element)
-            WHEN 'string' THEN
-                element_text := quote_literal(json_element #>> '{}');
-            WHEN 'number' THEN
-                element_text := json_element #>> '{}';
-            WHEN 'boolean' THEN
-                element_text := CASE WHEN (json_element)::boolean THEN 'true' ELSE 'false' END;
-            ELSE
-                element_text := quote_literal(json_element #>> '{}');
-        END CASE;
-        
-        in_values := in_values || element_text;
-    END LOOP;
-    
-    RETURN in_values;
-END;
-$BODY$;
-
-COMMENT ON FUNCTION _format_json_array_for_in(jsonb) IS 'Преобразует JSONB массив в строку значений для SQL IN clause. Поддерживает string, number, boolean типы';
-
--- ⚠️ Функции _build_numeric_comparison и _build_string_comparison удалены
--- Теперь используется _build_exists_condition + _build_inner_condition
-
--- Вспомогательная функция для построения части условия внутри EXISTS
-CREATE OR REPLACE FUNCTION _build_inner_condition(
-    operator_name text,
-    operator_value text
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    op_symbol text;
-    pattern text;
-    in_values_list text;
-BEGIN
-    -- Числовые и DateTime операторы
-    IF operator_name IN ('$gt', '$lt', '$gte', '$lte') THEN
-        CASE operator_name
-            WHEN '$gt' THEN op_symbol := '>';
-            WHEN '$lt' THEN op_symbol := '<';
-            WHEN '$gte' THEN op_symbol := '>=';
-            WHEN '$lte' THEN op_symbol := '<=';
-        END CASE;
-        
-        -- Пытаемся определить тип данных по формату значения
-        IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
-            -- DateTime формат (YYYY-MM-DD...)
-            RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime %s %L::timestamp',
-                op_symbol, operator_value);
-        ELSE
-            -- Числовые типы
-            RETURN format(' AND ((ft._db_type = ''Long'' AND fv._Long %s %L) OR (ft._db_type = ''Double'' AND fv._Double %s %L))',
-                op_symbol, operator_value::bigint, op_symbol, operator_value::double precision);
-        END IF;
-    
-    -- Строковые операторы
-    ELSIF operator_name IN ('$startsWith', '$endsWith', '$contains') THEN
-        CASE operator_name
-            WHEN '$startsWith' THEN pattern := operator_value || '%';
-            WHEN '$endsWith' THEN pattern := '%' || operator_value;
-            WHEN '$contains' THEN pattern := '%' || operator_value || '%';
-        END CASE;
-        
-        RETURN format(' AND ft._db_type = ''String'' AND fv._String LIKE %L', pattern);
-    
-    -- Оператор IN
-    ELSIF operator_name = '$in' THEN
-        in_values_list := _format_json_array_for_in(operator_value::jsonb);
-        RETURN format(' AND ((ft._db_type = ''String'' AND fv._String IN (%s)) OR (ft._db_type = ''Long'' AND fv._Long::text IN (%s)) OR (ft._db_type = ''Double'' AND fv._Double::text IN (%s)) OR (ft._db_type = ''Boolean'' AND fv._Boolean::text IN (%s)) OR (ft._db_type = ''DateTime'' AND fv._DateTime::text IN (%s)))',
-            in_values_list, in_values_list, in_values_list, in_values_list, in_values_list);
-    
-    -- Оператор NOT EQUAL - требует специальной обработки
-    ELSIF operator_name = '$ne' THEN
-        -- Для $ne конкретное значение строим позитивное условие для отрицания через NOT EXISTS
-        -- Для $ne null это особый случай - ищем существующие записи (в EAV null = нет записи)
-        IF operator_value IS NULL OR operator_value = 'null' OR operator_value = '' THEN
-            -- $ne null означает "поле существует" (в EAV модели null значения не сохраняются)  
-            -- Это будет обработано через обычный EXISTS, а не NOT EXISTS
-            RETURN ' AND TRUE';  -- Любая существующая запись означает "не null"
-        ELSE
-            -- $ne конкретное значение - строим позитивное условие для отрицания через NOT EXISTS
-            IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
-                RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', operator_value);
-            ELSIF operator_value ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-                RETURN format(' AND ft._db_type = ''Guid'' AND fv._Guid = %L::uuid', operator_value);
-            ELSIF operator_value ~ '^-?\d+$' THEN
-                RETURN format(' AND ft._db_type = ''Long'' AND fv._Long = %L::bigint', operator_value);
-            ELSIF operator_value IN ('true', 'false') THEN
-                RETURN format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L::boolean', operator_value);
-            ELSE
-                RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
-            END IF;
-        END IF;
-    
-    -- Оператор проверки содержания в массиве
-    ELSIF operator_name = '$arrayContains' THEN
-        -- Ищем значение в JSONB массиве (все массивы хранятся в колонке _Array)
-        -- Используем безопасное сравнение без принудительного каста
-        RETURN format(' AND fs._is_array = true AND fv._Array IS NOT NULL AND (
-            (ft._db_type = ''String'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb))) OR
-            (ft._db_type = ''Long'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb))) OR
-            (ft._db_type = ''Double'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb))) OR  
-            (ft._db_type = ''Boolean'' AND %L IN (SELECT jsonb_array_elements_text(fv._Array::jsonb)))
-        )', operator_value, operator_value, operator_value, operator_value);
-    
-    -- Оператор проверки непустого массива
-    ELSIF operator_name = '$arrayAny' THEN
-        -- Проверяем что массив не пустой (все массивы хранятся в колонке _Array)
-        RETURN ' AND fs._is_array = true AND fv._Array IS NOT NULL AND jsonb_array_length(fv._Array::jsonb) > 0';
-    
-    -- Оператор проверки пустого массива
-    ELSIF operator_name = '$arrayEmpty' THEN
-        -- Проверяем что массив пустой или не существует
-        RETURN ' AND fs._is_array = true AND (fv._Array IS NULL OR jsonb_array_length(fv._Array::jsonb) = 0)';
-    
-    -- Операторы подсчета элементов массива
-    ELSIF operator_name = '$arrayCount' THEN
-        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) = %L::int', operator_value::int);
-    
-    ELSIF operator_name = '$arrayCountGt' THEN
-        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) > %L::int', operator_value::int);
-    
-    ELSIF operator_name = '$arrayCountGte' THEN
-        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) >= %L::int', operator_value::int);
-    
-    ELSIF operator_name = '$arrayCountLt' THEN
-        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) < %L::int', operator_value::int);
-    
-    ELSIF operator_name = '$arrayCountLte' THEN
-        RETURN format(' AND fs._is_array = true AND COALESCE(jsonb_array_length(fv._Array::jsonb), 0) <= %L::int', operator_value::int);
-    
-    ELSE
-        -- Простое равенство - определяем тип по формату значения
-        IF operator_value ~ '^\d{4}-\d{2}-\d{2}' THEN
-            -- DateTime формат (YYYY-MM-DD)
-            RETURN format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', operator_value);
-        ELSIF operator_value ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-            -- GUID формат (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)
-            RETURN format(' AND ft._db_type = ''Guid'' AND fv._Guid = %L::uuid', operator_value);
-        ELSIF operator_value ~ '^-?\d+$' THEN
-            -- Числовое значение (только цифры, возможен минус)
-            RETURN format(' AND ft._db_type = ''Long'' AND fv._Long = %L::bigint', operator_value);
-        ELSIF operator_value IN ('true', 'false') THEN
-            -- Boolean значение
-            RETURN format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L::boolean', operator_value);
-        ELSE
-            -- Строковое значение (по умолчанию)
-            RETURN format(' AND ft._db_type = ''String'' AND fv._String = %L', operator_value);
-        END IF;
-    END IF;
-END;
-$BODY$;
-
-COMMENT ON FUNCTION _build_inner_condition(text, text) IS 'Строит внутреннюю часть SQL условия (без EXISTS) для использования в комбинированных условиях. Автоопределение типов по формату значения: DateTime (YYYY-MM-DD), GUID (xxxx-xxxx), Long (цифры), Boolean (true/false), String (по умолчанию). Поддерживает операторы: $gt, $gte, $lt, $lte, $ne, $in, $contains, $startsWith, $endsWith, $arrayContains, $arrayAny, $arrayEmpty, $arrayCount, $arrayCountGt, $arrayCountGte, $arrayCountLt, $arrayCountLte.';
-
--- Универсальный модуль для создания EXISTS условий
-CREATE OR REPLACE FUNCTION _build_exists_condition(
-    field_name text,
-    inner_conditions text,
-    negate boolean DEFAULT false,
-    for_arrays boolean DEFAULT false
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    exists_keyword text;
-    array_condition text;
-BEGIN
-    exists_keyword := CASE WHEN negate THEN 'NOT EXISTS' ELSE 'EXISTS' END;
-    
-    -- Выбираем условие для массивов или обычных полей
-    array_condition := CASE WHEN for_arrays THEN 'fs._is_array = true' ELSE 'fs._is_array = false' END;
-    
-    RETURN format(' AND %s (
-        SELECT 1 FROM _values fv 
-        JOIN _structures fs ON fs._id = fv._id_structure 
-        JOIN _types ft ON ft._id = fs._id_type
-        WHERE fv._id_object = o._id 
-          AND fs._name = %L 
-          AND %s%s
-    )', exists_keyword, field_name, array_condition, inner_conditions);
-END;
-$BODY$;
-
--- Комментарий к универсальному модулю EXISTS
-COMMENT ON FUNCTION _build_exists_condition(text, text, boolean, boolean) IS 'Универсальный модуль для создания EXISTS/NOT EXISTS условий с базовыми JOIN. Поддерживает как обычные поля (fs._is_array = false), так и массивы (fs._is_array = true). Параметр for_arrays управляет типом поля.';
-
--- Вспомогательная функция для построения одиночного условия
-CREATE OR REPLACE FUNCTION _build_single_condition(
-    field_name text,
-    operator_name text,
-    operator_value text
-) RETURNS text
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-DECLARE
-    is_array_operator boolean := false;
-    use_not_exists boolean := false;
-BEGIN
-    -- Определяем специальные операторы для массивов
-    is_array_operator := operator_name IN ('$arrayContains', '$arrayAny', '$arrayEmpty', '$arrayCount', '$arrayCountGt', '$arrayCountGte', '$arrayCountLt', '$arrayCountLte');
-    
-    -- Определяем когда использовать NOT EXISTS
-    -- $ne null - это особый случай: ищем существующие записи (EXISTS)
-    -- $ne конкретное_значение - ищем записи которые НЕ равны значению (NOT EXISTS)
-    use_not_exists := operator_name = '$ne' AND operator_value IS NOT NULL AND operator_value != 'null' AND operator_value != '';
-    
-    RETURN _build_exists_condition(
-        field_name, 
-        _build_inner_condition(operator_name, operator_value), 
-        use_not_exists,  -- negate = true только для $ne с конкретным значением
-        is_array_operator  -- for_arrays
-    );
-END;
-$BODY$;
-
--- Специальная функция для обработки логического оператора $and
-CREATE OR REPLACE FUNCTION _build_and_condition(
-    and_conditions jsonb
-) RETURNS text
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-DECLARE
-    result_condition text := '';
-    sub_condition jsonb;
-    field_name text;
-    field_values jsonb;
-    combined_condition text;
-    operator_key text;
-    operator_value text;
-    i integer;
-BEGIN
-    -- Проходим по всем условиям в массиве $and
-    FOR i IN 0..jsonb_array_length(and_conditions) - 1 LOOP
-        sub_condition := and_conditions->i;
-        
-        -- Обрабатываем каждое поле в условии
-        FOR field_name, field_values IN SELECT * FROM jsonb_each(sub_condition) LOOP
-            -- Если это объект с операторами
-            IF jsonb_typeof(field_values) = 'object' THEN
-                -- Собираем все условия для поля
-                combined_condition := '';
-                FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                    combined_condition := combined_condition || _build_inner_condition(operator_key, operator_value);
-                END LOOP;
-                
-                -- Используем универсальную функцию
-                result_condition := result_condition || _build_exists_condition(field_name, combined_condition, false, false);
-            ELSE
-                -- Простое равенство для примитивных значений
-                result_condition := result_condition || _build_exists_condition(field_name, 
-                    format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), false, false);
-            END IF;
-        END LOOP;
-    END LOOP;
-    
-    RETURN result_condition;
-END;
-$BODY$;
-
--- Специальная функция для обработки логического оператора $or
-CREATE OR REPLACE FUNCTION _build_or_condition(
-    or_conditions jsonb
-) RETURNS text
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-DECLARE
-    result_condition text := '';
-    sub_condition jsonb;
-    field_name text;
-    field_values jsonb;
-    single_condition text;
-    operator_key text;
-    operator_value text;
-    i integer;
-    or_parts text[] := '{}';
-BEGIN
-    -- Проходим по всем условиям в массиве $or
-    FOR i IN 0..jsonb_array_length(or_conditions) - 1 LOOP
-        sub_condition := or_conditions->i;
-        
-        -- Проверяем, есть ли вложенные логические операторы
-        IF sub_condition ? '$and' THEN
-            -- Рекурсивно обрабатываем вложенный $and
-            single_condition := _build_and_condition(sub_condition->'$and');
-            -- Убираем начальный ' AND ' и добавляем в массив OR
-            IF single_condition LIKE ' AND %' THEN
-                single_condition := substring(single_condition from 6);
-            END IF;
-            or_parts := or_parts || ('(' || single_condition || ')');
-        ELSIF sub_condition ? '$or' THEN
-            -- Рекурсивно обрабатываем вложенный $or  
-            single_condition := _build_or_condition(sub_condition->'$or');
-            -- Убираем начальный ' AND ' и скобки
-            IF single_condition LIKE ' AND (%' THEN
-                single_condition := substring(single_condition from 7);
-                single_condition := left(single_condition, length(single_condition) - 1);
-            END IF;
-            or_parts := or_parts || ('(' || single_condition || ')');
-        ELSIF sub_condition ? '$not' THEN
-            -- Рекурсивно обрабатываем вложенный $not
-            single_condition := _build_not_condition(sub_condition->'$not');
-            -- Убираем начальный ' AND '
-            IF single_condition LIKE ' AND %' THEN
-                single_condition := substring(single_condition from 6);
-            END IF;
-            or_parts := or_parts || ('(' || single_condition || ')');
-        ELSE
-            -- Обрабатываем обычные поля
-            FOR field_name, field_values IN SELECT * FROM jsonb_each(sub_condition) LOOP
-                -- Если это объект с операторами
-                IF jsonb_typeof(field_values) = 'object' THEN
-                -- Собираем все условия для поля
-                single_condition := '';
-                FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                    single_condition := single_condition || _build_inner_condition(operator_key, operator_value);
-                END LOOP;
-                
-                -- Используем универсальную функцию (убираем начальный ' AND ')
-                single_condition := _build_exists_condition(field_name, single_condition, false, false);
-                IF single_condition LIKE ' AND %' THEN
-                    single_condition := substring(single_condition from 6);
-                END IF;
-                or_parts := or_parts || single_condition;
-                ELSE
-                    -- Простое равенство для примитивных значений - используем универсальную функцию
-                    IF jsonb_typeof(field_values) = 'boolean' THEN
-                        single_condition := _build_exists_condition(field_name,
-                            format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (field_values #>> '{}')::boolean), false, false);
-                    ELSIF jsonb_typeof(field_values) = 'number' THEN
-                        single_condition := _build_exists_condition(field_name,
-                            format(' AND ((ft._db_type = ''Long'' AND fv._Long = %L) OR (ft._db_type = ''Double'' AND fv._Double = %L))',
-                                (field_values #>> '{}')::bigint, (field_values #>> '{}')::double precision), false, false);
-                    ELSE
-                        -- string и прочие типы (включая DateTime как строки)
-                        IF (field_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
-                            -- DateTime формат в строке
-                            single_condition := _build_exists_condition(field_name,
-                                format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', field_values #>> '{}'), false, false);
-                        ELSE
-                            -- Обычная строка
-                            single_condition := _build_exists_condition(field_name,
-                                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), false, false);
-                        END IF;
-                    END IF;
-                    
-                    -- Убираем начальный ' AND '
-                    IF single_condition LIKE ' AND %' THEN
-                        single_condition := substring(single_condition from 6);
-                    END IF;
-                    or_parts := or_parts || single_condition;
-                END IF;
-            END LOOP;
-        END IF;
-    END LOOP;
-    
-    -- Объединяем все части через OR
-    IF array_length(or_parts, 1) > 0 THEN
-        result_condition := ' AND (' || array_to_string(or_parts, ' OR ') || ')';
-    END IF;
-    
-    RETURN result_condition;
-END;
-$BODY$;
-
--- Специальная функция для обработки логического оператора $not
-CREATE OR REPLACE FUNCTION _build_not_condition(
-    not_condition jsonb
-) RETURNS text
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-DECLARE
-    result_condition text := '';
-    field_name text;
-    field_values jsonb;
-    positive_condition text;
-    operator_key text;
-    operator_value text;
-BEGIN
-    -- Обрабатываем NOT условие (инвертируем EXISTS в NOT EXISTS)
-    FOR field_name, field_values IN SELECT * FROM jsonb_each(not_condition) LOOP
-        -- Если это объект с операторами
-        IF jsonb_typeof(field_values) = 'object' THEN
-            -- Собираем все условия для поля
-            positive_condition := '';
-            FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(field_values) LOOP
-                positive_condition := positive_condition || _build_inner_condition(operator_key, operator_value);
-            END LOOP;
-            
-            -- Используем универсальную функцию с NOT EXISTS
-            result_condition := result_condition || _build_exists_condition(field_name, positive_condition, true, false);
-        ELSE
-            -- Простое равенство для примитивных значений - инвертируем
-            result_condition := result_condition || _build_exists_condition(field_name,
-                format(' AND ft._db_type = ''String'' AND fv._String = %L', field_values #>> '{}'), true, false);
-        END IF;
-    END LOOP;
-    
-    RETURN result_condition;
-END;
-$BODY$;
-
--- Модуль построения фасетных условий фильтрации
-CREATE OR REPLACE FUNCTION _build_facet_conditions(
-    facet_filters jsonb
-) RETURNS text
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-DECLARE
-    filter_key text;
-    filter_values jsonb;
-    where_conditions text := '';
-    operator_key text;
-    operator_value text;
-    combined_condition text;
-    i integer;
-    sub_condition jsonb;
-BEGIN
-    -- Строим условия фильтрации на основе фасетов
-    IF facet_filters IS NOT NULL AND jsonb_typeof(facet_filters) = 'object' THEN
-        -- Обработка $and на верхнем уровне
-        IF facet_filters ? '$and' THEN
-            where_conditions := where_conditions || _build_and_condition(facet_filters->'$and');
-            RETURN where_conditions;
-        END IF;
-        
-        -- Обработка $or на верхнем уровне
-        IF facet_filters ? '$or' THEN
-            where_conditions := where_conditions || _build_or_condition(facet_filters->'$or');
-            RETURN where_conditions;
-        END IF;
-        
-        -- Обработка $not на верхнем уровне  
-        IF facet_filters ? '$not' THEN
-            where_conditions := where_conditions || _build_not_condition(facet_filters->'$not');
-            RETURN where_conditions;
-        END IF;
-        
-        FOR filter_key, filter_values IN SELECT * FROM jsonb_each(facet_filters) LOOP
-            -- Обработка массивов (старый формат)
-            IF jsonb_typeof(filter_values) = 'array' AND jsonb_array_length(filter_values) > 0 THEN
-                where_conditions := where_conditions || format(
-                    ' AND EXISTS (
-                        SELECT 1 FROM _values fv 
-                        JOIN _structures fs ON fs._id = fv._id_structure 
-                        JOIN _types ft ON ft._id = fs._id_type
-                        WHERE fv._id_object = o._id 
-                          AND fs._name = %L 
-                          AND (
-                            -- Массивы - поиск пересечения с фильтром
-                            (fs._is_array = true AND fv._Array IS NOT NULL AND 
-                             (fv._Array::jsonb ?| %L::text[])) OR
-                            -- Обычные поля
-                            (fs._is_array = false AND (
-                              (ft._db_type = ''String'' AND to_jsonb(fv._String) = ANY(%L::jsonb[])) OR
-                              (ft._db_type = ''Long'' AND to_jsonb(fv._Long) = ANY(%L::jsonb[])) OR
-                              (ft._db_type = ''Boolean'' AND to_jsonb(fv._Boolean) = ANY(%L::jsonb[])) OR
-                              (ft._db_type = ''Double'' AND to_jsonb(fv._Double) = ANY(%L::jsonb[])) OR
-                              (ft._db_type = ''DateTime'' AND to_jsonb(fv._DateTime) = ANY(%L::jsonb[]))
-                            ))
-                          )
-                    )',
-                    filter_key,
-                    array(SELECT jsonb_array_elements_text(filter_values)), -- для массивов
-                    array(SELECT jsonb_array_elements_text(filter_values)), -- String
-                    array(SELECT jsonb_array_elements_text(filter_values)), -- Long
-                    array(SELECT jsonb_array_elements_text(filter_values)), -- Boolean
-                    array(SELECT jsonb_array_elements_text(filter_values)), -- Double
-                    array(SELECT jsonb_array_elements_text(filter_values))  -- DateTime
-                );
-            -- Обработка объектов с операторами (новый LINQ формат)
-            ELSIF jsonb_typeof(filter_values) = 'object' THEN
-                -- Обработка логического оператора $and - специальная логика
-                IF filter_values ? '$and' THEN
-                    where_conditions := where_conditions || _build_and_condition(filter_values->'$and');
-                ELSE
-                    -- Проверяем количество операторов в объекте
-                    IF (SELECT COUNT(*) FROM jsonb_each(filter_values)) = 1 THEN
-                        -- Один оператор - используем вспомогательную функцию
-                        FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(filter_values) LOOP
-                            where_conditions := where_conditions || _build_single_condition(filter_key, operator_key, operator_value);
-                        END LOOP;
-                    ELSE
-                        -- Множественные операторы на одном поле - используем универсальную функцию
-                        combined_condition := '';
-                        FOR operator_key, operator_value IN SELECT key, value FROM jsonb_each_text(filter_values) LOOP
-                            combined_condition := combined_condition || _build_inner_condition(operator_key, operator_value);
-                        END LOOP;
-                        where_conditions := where_conditions || _build_exists_condition(filter_key, combined_condition, false, false);
-                END IF;
-                END IF;
-            -- Обработка простых значений (равенство) и NULL
-            ELSIF jsonb_typeof(filter_values) IN ('string', 'number', 'boolean', 'null') THEN
-                -- Определяем тип значения и используем универсальную функцию
-                IF jsonb_typeof(filter_values) = 'boolean' THEN
-                    where_conditions := where_conditions || _build_exists_condition(filter_key,
-                        format(' AND ft._db_type = ''Boolean'' AND fv._Boolean = %L', (filter_values #>> '{}')::boolean), false, false);
-                ELSIF jsonb_typeof(filter_values) = 'number' THEN
-                    where_conditions := where_conditions || _build_exists_condition(filter_key,
-                        format(' AND ((ft._db_type = ''Long'' AND fv._Long = %L) OR (ft._db_type = ''Double'' AND fv._Double = %L))',
-                            (filter_values #>> '{}')::bigint, (filter_values #>> '{}')::double precision), false, false);
-                ELSIF jsonb_typeof(filter_values) = 'string' THEN
-                    -- Проверяем формат для определения типа
-                    IF (filter_values #>> '{}') ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
-                        -- GUID формат (проверяем ПЕРЕД DateTime)
-                        where_conditions := where_conditions || _build_exists_condition(filter_key,
-                            format(' AND ft._db_type = ''Guid'' AND fv._Guid = %L::uuid', filter_values #>> '{}'), false, false);
-                    ELSIF (filter_values #>> '{}') ~ '^\d{4}-\d{2}-\d{2}' THEN
-                        -- DateTime формат
-                        where_conditions := where_conditions || _build_exists_condition(filter_key,
-                            format(' AND ft._db_type = ''DateTime'' AND fv._DateTime = %L::timestamp', filter_values #>> '{}'), false, false);
-                    ELSE
-                        -- Обычная строка
-                        where_conditions := where_conditions || _build_exists_condition(filter_key,
-                            format(' AND ft._db_type = ''String'' AND fv._String = %L', filter_values #>> '{}'), false, false);
-                    END IF;
-                ELSIF jsonb_typeof(filter_values) = 'null' THEN
-                    -- NULL значение - ищем записи где поле не существует или равно NULL
-                    where_conditions := where_conditions || format(
-                        ' AND NOT EXISTS (
-                            SELECT 1 FROM _values fv 
-                            JOIN _structures fs ON fs._id = fv._id_structure 
-                            JOIN _types ft ON ft._id = fs._id_type
-                            WHERE fv._id_object = o._id 
-                              AND fs._name = %L 
-                              AND fs._is_array = false
-                              AND (
-                                (ft._db_type = ''String'' AND fv._String IS NOT NULL) OR
-                                (ft._db_type = ''Long'' AND fv._Long IS NOT NULL) OR
-                                (ft._db_type = ''Double'' AND fv._Double IS NOT NULL) OR
-                                (ft._db_type = ''DateTime'' AND fv._DateTime IS NOT NULL) OR
-                                (ft._db_type = ''Boolean'' AND fv._Boolean IS NOT NULL) OR
-                                (ft._db_type = ''Guid'' AND fv._Guid IS NOT NULL) OR
-                                (ft._db_type = ''Object'' AND fv._Long IS NOT NULL)
-                              )
-                        )', filter_key);
-                END IF;
-            END IF;
-        END LOOP;
-    END IF;
-    
-    RETURN where_conditions;
-END;
-$BODY$;
-
--- Комментарий к модулю фасетной фильтрации
-COMMENT ON FUNCTION _build_facet_conditions(jsonb) IS 'Приватный модуль для построения WHERE условий на основе facet_filters. Поддерживает массивы, операторы сравнения ($gt, $lt, $gte, $lte), строковые операторы ($startsWith, $endsWith, $contains), логические операторы ($and, $or, $not) и простые значения равенства. Автоматически определяет типы: String, Long, Double, Boolean, DateTime (по формату). Возвращает готовую строку условий для добавления к основному запросу.';
-
--- Модуль построения условий сортировки
-CREATE OR REPLACE FUNCTION _build_order_conditions(
-    order_by jsonb,
-    use_recursive_alias boolean
-) RETURNS text
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-            DECLARE
-    order_conditions text := 'ORDER BY o._id';
-    order_item jsonb;
-    field_name text;
-    direction text;
-                order_clause text;
-    i integer;
-            BEGIN
-    -- Обрабатываем параметры сортировки
-    IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' AND jsonb_array_length(order_by) > 0 THEN
-        order_conditions := '';
-        
-        -- Обрабатываем каждый элемент сортировки
-        FOR i IN 0..jsonb_array_length(order_by) - 1 LOOP
-            order_item := order_by->i;
-            field_name := order_item->>'field';
-            direction := COALESCE(order_item->>'direction', 'ASC');
-            
-            -- Пропускаем некорректные элементы сортировки
-            IF field_name IS NOT NULL AND field_name != '' THEN
-                                        -- Формируем ORDER BY для поля из _values с padding для правильной сортировки чисел
-                        order_clause := format('(
-                            SELECT CASE 
-                                WHEN v._String IS NOT NULL THEN v._String
-                                WHEN v._Long IS NOT NULL THEN LPAD(v._Long::text, 20, ''0'')
-                                WHEN v._Double IS NOT NULL THEN LPAD(REPLACE(v._Double::text, ''.'', ''~''), 25, ''0'')
-                                WHEN v._DateTime IS NOT NULL THEN TO_CHAR(v._DateTime, ''YYYY-MM-DD HH24:MI:SS.US'')
-                                WHEN v._Boolean IS NOT NULL THEN v._Boolean::text
-                                ELSE NULL
-                            END
-                            FROM _values v 
-                            JOIN _structures s ON v._id_structure = s._id 
-                            WHERE v._id_object = o._id AND s._name = %L
-                            LIMIT 1
-                        ) %s NULLS LAST', field_name, direction);
-                
-                -- Добавляем запятую, если уже есть условия
-                IF order_conditions != '' THEN
-                    order_conditions := order_conditions || ', ';
-                END IF;
-                order_conditions := order_conditions || order_clause;
-            END IF;
-        END LOOP;
-        
-        -- Формируем финальный ORDER BY
-        IF order_conditions != '' THEN
-            order_conditions := 'ORDER BY ' || order_conditions || ', o._id';
-        ELSE
-            order_conditions := 'ORDER BY o._id';
-        END IF;
-    END IF;
-    
-    -- Если используется рекурсивный алиас (для descendants), заменяем 'o.' на 'd.'
-    IF use_recursive_alias THEN
-        order_conditions := replace(order_conditions, 'o.', 'd.');
-    END IF;
-    
-    RETURN order_conditions;
-END;
-$BODY$;
-
--- Комментарий к модулю сортировки
-COMMENT ON FUNCTION _build_order_conditions(jsonb, boolean) IS 'Приватный модуль для построения ORDER BY условий на основе order_by параметра. Поддерживает сортировку по полям из _values с правильной обработкой типов данных. Параметр use_recursive_alias определяет нужно ли заменить o._id на d._id для рекурсивных запросов.';
-
--- Модуль построения финального результата
-CREATE OR REPLACE FUNCTION _build_search_result(
-    objects_result jsonb,
-    total_count integer,
-    limit_count integer,
-    offset_count integer,
-    scheme_id bigint
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-BEGIN
-    RETURN jsonb_build_object(
-        'objects', COALESCE(objects_result, '[]'::jsonb),
-        'total_count', total_count,
-        'limit', limit_count,
-        'offset', offset_count,
-        'facets', get_facets(scheme_id)
-    );
-END;
-$BODY$;
-
--- Комментарий к модулю результата
-COMMENT ON FUNCTION _build_search_result(jsonb, integer, integer, integer, bigint) IS 'Приватный модуль для построения финального JSON результата поиска. Формирует стандартный ответ с объектами, метаданными пагинации и фасетами для UI.';
-
--- Общая функция для выполнения поиска и формирования результата
-CREATE OR REPLACE FUNCTION _execute_search_and_build_result(
-    query_text text,           -- SQL запрос для объектов
-    count_query_text text,     -- SQL запрос для подсчета
-    scheme_id bigint,          -- для получения фасетов
-    limit_count integer,       -- для метаданных
-    offset_count integer       -- для метаданных
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE
-AS $BODY$
-DECLARE
-    objects_result jsonb;
-    total_count integer;
-BEGIN
-    -- Выполняем запрос для получения объектов
-    EXECUTE query_text INTO objects_result;
-    
-    -- Получаем общее количество
-    EXECUTE count_query_text INTO total_count;
-    
-    -- Используем существующий _build_search_result для формирования ответа
-    RETURN _build_search_result(
-        COALESCE(objects_result, '[]'::jsonb),
-        total_count,
-        limit_count,
-        offset_count,
-        scheme_id
-    );
-END;
-$BODY$;
-
--- Комментарий к функции выполнения поиска
-COMMENT ON FUNCTION _execute_search_and_build_result(text, text, bigint, integer, integer) IS 'Общая функция для выполнения SQL запросов поиска и формирования стандартного результата. Инкапсулирует EXECUTE и построение JSON ответа.';
-
--- Генерирует базовую часть WITH RECURSIVE для разных случаев
-CREATE OR REPLACE FUNCTION _build_recursive_base_case(
-    parent_ids bigint[],
-    distinct_fields text DEFAULT ''  -- дополнительные поля для DISTINCT
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    is_batch boolean;
-    base_fields text;
-BEGIN
-    -- Определяем batch режим
-    is_batch := array_length(parent_ids, 1) > 1;
-    
-    -- Формируем список полей
-    base_fields := '_id' || CASE WHEN distinct_fields != '' THEN ', ' || distinct_fields ELSE '' END || ', 0::integer as depth';
-    
-    IF is_batch THEN
-        RETURN format('SELECT unnest(%L::bigint[]) as %s
-                      WHERE %L IS NOT NULL AND array_length(%L::bigint[], 1) > 0',
-                      parent_ids, base_fields, parent_ids, parent_ids);
-    ELSE
-        RETURN format('SELECT %s::bigint as %s WHERE %s IS NOT NULL',
-                      parent_ids[1], base_fields, parent_ids[1]);
-    END IF;
-END;
-$BODY$;
-
--- Комментарий к функции генерации базового случая
-COMMENT ON FUNCTION _build_recursive_base_case(bigint[], text) IS 'Генерирует базовый случай (anchor) для WITH RECURSIVE CTE. Поддерживает одиночные и batch parent_ids, а также дополнительные поля для DISTINCT.';
-
--- Генерирует основной SELECT запрос с jsonb_agg
-CREATE OR REPLACE FUNCTION _build_object_select_query(
-    scheme_id bigint,
-    where_conditions text,
-    order_conditions text,
-    limit_count integer,
-    offset_count integer,
-    distinct_mode boolean,
-    has_custom_order boolean DEFAULT false,
-    table_alias text DEFAULT 'o',
-    from_cte text DEFAULT NULL  -- имя CTE если используется рекурсия
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    query_text text;
-    from_clause text;
-    join_clause text := '';
-BEGIN
-    -- Формируем FROM часть
-    IF from_cte IS NOT NULL THEN
-        -- Используем CTE для рекурсивных запросов
-        from_clause := format('FROM %s d JOIN _objects %s ON d._id = %s._id', 
-                             from_cte, table_alias, table_alias);
-        where_conditions := format('WHERE d.depth > 0 AND %s._id_scheme = %s %s',
-                                  table_alias, scheme_id, where_conditions);
-    ELSE
-        -- Прямой запрос к таблице
-        from_clause := format('FROM _objects %s', table_alias);
-        where_conditions := format('WHERE %s._id_scheme = %s %s', 
-                                  table_alias, scheme_id, where_conditions);
-    END IF;
-    
-    IF distinct_mode THEN
-        IF has_custom_order THEN
-            -- DISTINCT + пользовательская сортировка (двухэтапный запрос)
-            query_text := format('SELECT jsonb_agg(get_object_json(sorted._id, 10))
-                FROM (
-                    SELECT distinct_sub._id FROM (
-                        SELECT DISTINCT ON (%s._hash) %s._id, %s._date_modify%s
-                        %s %s
-                        ORDER BY %s._hash, %s._date_modify DESC
-                    ) distinct_sub %s
-                    LIMIT %s OFFSET %s
-                ) sorted',
-                table_alias, table_alias, table_alias,
-                CASE WHEN from_cte IS NOT NULL THEN ', d.depth' ELSE '' END,
-                from_clause, where_conditions,
-                table_alias, table_alias, order_conditions,
-                limit_count, offset_count
-            );
-        ELSE
-            -- DISTINCT без пользовательской сортировки
-            query_text := format('SELECT jsonb_agg(get_object_json(sub._id, 10))
-                FROM (
-                    SELECT DISTINCT ON (%s._hash) %s._id, %s._date_modify
-                    %s %s
-                    ORDER BY %s._hash, %s._date_modify DESC
-                    LIMIT %s OFFSET %s
-                ) sub',
-                table_alias, table_alias, table_alias,
-                from_clause, where_conditions,
-                table_alias, table_alias,
-                limit_count, offset_count
-            );
-        END IF;
-    ELSE
-        -- Обычный запрос без DISTINCT
-        query_text := format('SELECT jsonb_agg(get_object_json(sub._id, 10))
-            FROM (
-                SELECT %s._id
-                %s %s %s
-                LIMIT %s OFFSET %s
-            ) sub',
-            CASE WHEN from_cte IS NOT NULL THEN 'd' ELSE table_alias END,
-            from_clause, where_conditions, order_conditions,
-            limit_count, offset_count
-        );
-    END IF;
-    
-    RETURN query_text;
-END;
-$BODY$;
-
--- Комментарий к функции генерации SELECT
-COMMENT ON FUNCTION _build_object_select_query(bigint, text, text, integer, integer, boolean, boolean, text, text) IS 'Генерирует основной SELECT запрос для получения объектов. Поддерживает DISTINCT режим, пользовательскую сортировку и рекурсивные CTE.';
-
--- Генерирует COUNT запрос
-CREATE OR REPLACE FUNCTION _build_count_query(
-    scheme_id bigint,
-    where_conditions text,
-    distinct_mode boolean DEFAULT false,
-    table_alias text DEFAULT 'o',
-    from_cte text DEFAULT NULL
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    from_clause text;
-    count_expr text;
-BEGIN
-    -- Формируем FROM часть
-    IF from_cte IS NOT NULL THEN
-        from_clause := format('FROM %s d JOIN _objects %s ON d._id = %s._id', 
-                             from_cte, table_alias, table_alias);
-        where_conditions := format('WHERE d.depth > 0 AND %s._id_scheme = %s %s',
-                                  table_alias, scheme_id, where_conditions);
-    ELSE
-        from_clause := format('FROM _objects %s', table_alias);
-        where_conditions := format('WHERE %s._id_scheme = %s %s', 
-                                  table_alias, scheme_id, where_conditions);
-    END IF;
-    
-    -- Формируем COUNT выражение
-    count_expr := CASE WHEN distinct_mode 
-                       THEN format('COUNT(DISTINCT %s._hash)', table_alias)
-                       ELSE 'COUNT(*)' 
-                  END;
-    
-    RETURN format('SELECT %s %s %s', count_expr, from_clause, where_conditions);
-END;
-$BODY$;
-
--- Комментарий к функции генерации COUNT
-COMMENT ON FUNCTION _build_count_query(bigint, text, boolean, text, text) IS 'Генерирует COUNT запрос для подсчета общего количества объектов. Поддерживает DISTINCT режим и рекурсивные CTE.';
-
--- Генерирует полный WITH RECURSIVE CTE
-CREATE OR REPLACE FUNCTION _build_full_recursive_cte(
-    parent_ids bigint[],
-    max_depth integer,
-    distinct_mode boolean
-) RETURNS text
-LANGUAGE 'plpgsql'
-IMMUTABLE
-AS $BODY$
-DECLARE
-    base_case text;
-    distinct_fields text;
-    recursive_fields text;
-BEGIN
-    -- Формируем поля для DISTINCT режима
-    distinct_fields := CASE WHEN distinct_mode 
-                           THEN ', NULL::varchar as _hash, NULL::timestamp as _date_modify' 
-                           ELSE '' 
-                      END;
-    
-    recursive_fields := CASE WHEN distinct_mode 
-                            THEN ', o._hash, o._date_modify' 
-                            ELSE '' 
-                       END;
-    
-    -- Генерируем базовый случай
-    base_case := _build_recursive_base_case(parent_ids, distinct_fields);
-    
-    -- Возвращаем полный CTE
-    RETURN format('WITH RECURSIVE descendants AS (
-        %s
-        UNION ALL
-        SELECT o._id%s, d.depth + 1
-        FROM _objects o
-        JOIN descendants d ON o._id_parent = d._id
-        WHERE d.depth < %s
-    )',
-    base_case, recursive_fields, max_depth);
-END;
-$BODY$;
-
--- Комментарий к функции генерации WITH RECURSIVE
-COMMENT ON FUNCTION _build_full_recursive_cte(bigint[], integer, boolean) IS 'Генерирует полный WITH RECURSIVE CTE для рекурсивного поиска потомков. Поддерживает DISTINCT режим.';
-
--- ===== СПЕЦИАЛИЗИРОВАННЫЕ ФУНКЦИИ =====
-
--- Базовая функция фасетного поиска (без parent_id)
-CREATE OR REPLACE FUNCTION search_objects_with_facets(
-    scheme_id bigint,
-    facet_filters jsonb DEFAULT NULL,
-    limit_count integer DEFAULT 100,
-    offset_count integer DEFAULT 0,
-    distinct_mode boolean DEFAULT false,
-    order_by jsonb DEFAULT NULL
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-DECLARE
-    where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text := _build_order_conditions(order_by, false);
-    has_custom_order boolean := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
-BEGIN
-    -- Используем новые вспомогательные функции
-    RETURN _execute_search_and_build_result(
-        _build_object_select_query(
-            scheme_id, where_conditions, order_conditions,
-            limit_count, offset_count, distinct_mode, has_custom_order
-        ),
-        _build_count_query(scheme_id, where_conditions, distinct_mode),
-        scheme_id, limit_count, offset_count
-    );
-END;
-$BODY$;
-
--- Комментарий к базовой функции
-COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb) IS 'Базовый фасетный поиск объектов указанной схемы без ограничений по иерархии. Поддерживает фильтрацию, сортировку, пагинацию и DISTINCT режим.';
-
--- Функция фасетного поиска детей (с parent_id)
-CREATE OR REPLACE FUNCTION search_objects_with_facets(
-    scheme_id bigint,
-    facet_filters jsonb,
-    limit_count integer,
-    offset_count integer,
-    distinct_mode boolean,
-    order_by jsonb,
-    parent_id bigint
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-DECLARE
-    where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text := _build_order_conditions(order_by, false);
-    has_custom_order boolean := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
-BEGIN
-    -- Уникальная логика: добавляем фильтр parent_id
-    where_conditions := where_conditions || format(' AND o._id_parent = %s', parent_id);
-    
-    -- Используем вспомогательные функции
-    RETURN _execute_search_and_build_result(
-        _build_object_select_query(
-            scheme_id, where_conditions, order_conditions,
-            limit_count, offset_count, distinct_mode, has_custom_order
-        ),
-        _build_count_query(scheme_id, where_conditions, distinct_mode),
-        scheme_id, limit_count, offset_count
-    );
-END;
-$BODY$;
-
--- Комментарий к функции для детей
-COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint) IS 'Фасетный поиск прямых дочерних объектов указанного родителя. Эквивалентен базовому поиску с добавлением фильтра parent_id.';
-
--- Функция фасетного поиска потомков (с parent_id и max_depth)
-CREATE OR REPLACE FUNCTION search_objects_with_facets(
-    scheme_id bigint,
-    facet_filters jsonb,
-    limit_count integer,
-    offset_count integer,
-    distinct_mode boolean,
-    order_by jsonb,
-    parent_id bigint,
-    max_depth integer
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-DECLARE
-    where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text;
-    has_custom_order boolean;
-    recursive_cte text;
-BEGIN
-    -- Уникальная логика: оптимизация для max_depth = 1
-    IF max_depth = 1 THEN
-        RETURN search_objects_with_facets(
-            scheme_id, facet_filters, limit_count, offset_count, 
-            distinct_mode, order_by, parent_id
-        );
-    END IF;
-    
-    -- Для рекурсии используем другой алиас
-    order_conditions := _build_order_conditions(order_by, true);
-    has_custom_order := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
-    
-    -- Генерируем WITH RECURSIVE
-    recursive_cte := _build_full_recursive_cte(ARRAY[parent_id]::bigint[], max_depth, distinct_mode);
-    
-    -- Используем вспомогательные функции
-    RETURN _execute_search_and_build_result(
-        recursive_cte || _build_object_select_query(
-            scheme_id, where_conditions, order_conditions,
-            limit_count, offset_count, distinct_mode, has_custom_order,
-            'o', 'descendants'
-        ),
-        recursive_cte || _build_count_query(
-            scheme_id, where_conditions, distinct_mode, 'o', 'descendants'
-        ),
-        scheme_id, limit_count, offset_count
-    );
-END;
-$BODY$;
-
--- Комментарий к функции для потомков
-COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint, integer) IS 'Фасетный поиск всех потомков указанного родителя до заданной глубины с рекурсивным обходом. Использует WITH RECURSIVE CTE для эффективного поиска в иерархии.';
-
--- ===== BATCH ПЕРЕГРУЗКИ (ИСПОЛЬЗУЯ МОДУЛЬНУЮ АРХИТЕКТУРУ) =====
-
--- Batch функция фасетного поиска детей (с parent_ids bigint[])
-CREATE OR REPLACE FUNCTION search_objects_with_facets(
-    scheme_id bigint,
-    facet_filters jsonb,
-    limit_count integer,
-    offset_count integer,
-    distinct_mode boolean,
-    order_by jsonb,
-    parent_ids bigint[]
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-DECLARE
-    where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text := _build_order_conditions(order_by, false);
-    has_custom_order boolean := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
-BEGIN
-    -- Уникальная логика: добавляем фильтр по массиву parent_ids
-    IF parent_ids IS NOT NULL AND array_length(parent_ids, 1) > 0 THEN
-        where_conditions := where_conditions || format(' AND o._id_parent = ANY(%L)', parent_ids);
-    END IF;
-    
-    -- Используем вспомогательные функции
-    RETURN _execute_search_and_build_result(
-        _build_object_select_query(
-            scheme_id, where_conditions, order_conditions,
-            limit_count, offset_count, distinct_mode, has_custom_order
-        ),
-        _build_count_query(scheme_id, where_conditions, distinct_mode),
-        scheme_id, limit_count, offset_count
-    );
-END;
-$BODY$;
-
--- Batch функция фасетного поиска потомков (с parent_ids bigint[] и max_depth)
-CREATE OR REPLACE FUNCTION search_objects_with_facets(
-    scheme_id bigint,
-    facet_filters jsonb,
-    limit_count integer,
-    offset_count integer,
-    distinct_mode boolean,
-    order_by jsonb,
-    parent_ids bigint[],
-    max_depth integer
-) RETURNS jsonb
-LANGUAGE 'plpgsql'
-COST 100
-VOLATILE NOT LEAKPROOF
-AS $BODY$
-DECLARE
-    where_conditions text := _build_facet_conditions(facet_filters);
-    order_conditions text;
-    has_custom_order boolean;
-    recursive_cte text;
-BEGIN
-    -- Уникальная логика: оптимизация для max_depth = 1
-    IF max_depth = 1 THEN
-        RETURN search_objects_with_facets(
-            scheme_id, facet_filters, limit_count, offset_count, 
-            distinct_mode, order_by, parent_ids
-        );
-    END IF;
-    
-    -- Проверка массива
-    IF parent_ids IS NULL OR array_length(parent_ids, 1) = 0 THEN
-        RETURN _build_search_result('[]'::jsonb, 0, limit_count, offset_count, scheme_id);
-    END IF;
-    
-    -- Для рекурсии используем другой алиас
-    order_conditions := _build_order_conditions(order_by, true);
-    has_custom_order := order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array';
-    
-    -- Генерируем WITH RECURSIVE
-    recursive_cte := _build_full_recursive_cte(parent_ids, max_depth, distinct_mode);
-    
-    -- Используем вспомогательные функции
-    RETURN _execute_search_and_build_result(
-        recursive_cte || _build_object_select_query(
-            scheme_id, where_conditions, order_conditions,
-            limit_count, offset_count, distinct_mode, has_custom_order,
-            'o', 'descendants'
-        ),
-        recursive_cte || _build_count_query(
-            scheme_id, where_conditions, distinct_mode, 'o', 'descendants'
-        ),
-        scheme_id, limit_count, offset_count
-    );
-END;
-$BODY$;
-
--- Комментарии к batch функциям
-COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint[]) IS 'Batch фасетный поиск прямых дочерних объектов МАССИВА родителей. Один SQL запрос вместо N отдельных вызовов для максимальной производительности.';
-
-COMMENT ON FUNCTION search_objects_with_facets(bigint, jsonb, integer, integer, boolean, jsonb, bigint[], integer) IS 'Batch фасетный поиск всех потомков МАССИВА родителей до заданной глубины с рекурсивным обходом. Использует WITH RECURSIVE CTE с unnest() для эффективного поиска в иерархии от множества корневых объектов.';
+-- Функция для фасетного поиска объектов с фильтрацией (РЕФАКТОРЕННАЯ МОДУЛЬНАЯ ВЕРСИЯ)
 
 -- Функция получения разрешений пользователя для конкретного объекта
 CREATE OR REPLACE FUNCTION get_user_permissions_for_object(
@@ -2571,6 +1233,9 @@ INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _i
 INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) VALUES (1017, NULL, 1002, NULL, -9223372036854775703, NULL, 'AuctionMetrics', 'Метрики аукциона', 8, NULL, true, NULL, NULL, NULL, NULL, NULL);
 INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) VALUES (1018, NULL, 1002, NULL, -9223372036854775700, NULL, 'Tag', 'Тег (группировка)', 9, NULL, NULL, NULL, NULL, true, NULL, NULL);
 
+-- Добавляем поле массива ссылок на AutoMetrics для тестирования
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) VALUES (1019, NULL, 1002, NULL, -9223372036854775703, NULL, 'RelatedMetrics', 'Связанные метрики (массив ссылок)', 10, NULL, NULL, true, NULL, NULL, NULL, NULL);
+
 
 -- Создание объектов для примера AnalyticsRecord с ID начиная с 1019
 
@@ -2582,38 +1247,57 @@ VALUES (1019, NULL, 1001, 1, 1, NOW(), NOW(), NULL, NULL, NULL, NULL, NULL, NULL
 INSERT INTO _objects (_id, _id_parent, _id_scheme, _id_owner, _id_who_change, _date_create, _date_modify, _date_begin, _date_complete, _key, _code_int, _code_string, _code_guid, _name, _note, _hash) 
 VALUES (1020, NULL, 1001, 1, 1, NOW(), NOW(), NULL, NULL, NULL, NULL, NULL, NULL, 'AuctionMetrics Example', NULL, NULL);
 
--- 3. Создаем главный объект AnalyticsRecord (ID: 1021)
+-- 3. Создаем второй объект AutoMetrics (ID: 1022) для тестирования массивов ссылок
+INSERT INTO _objects (_id, _id_parent, _id_scheme, _id_owner, _id_who_change, _date_create, _date_modify, _date_begin, _date_complete, _key, _code_int, _code_string, _code_guid, _name, _note, _hash) 
+VALUES (1022, NULL, 1001, 1, 1, NOW(), NOW(), NULL, NULL, NULL, NULL, NULL, NULL, 'AutoMetrics Example 2', NULL, NULL);
+
+-- 4. Создаем главный объект AnalyticsRecord (ID: 1021)
 INSERT INTO _objects (_id, _id_parent, _id_scheme, _id_owner, _id_who_change, _date_create, _date_modify, _date_begin, _date_complete, _key, _code_int, _code_string, _code_guid, _name, _note, _hash) 
 VALUES (1021, NULL, 1002, 1, 1, NOW(), NOW(), NULL, NULL, NULL, NULL, NULL, NULL, 'AnalyticsRecord Example', NULL, NULL);
 
 -- Заполняем значения для AutoMetrics (объект 1019)
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1022, 1003, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- AdvertId
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1023, 1004, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Baskets
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1024, 1005, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Base
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1025, 1006, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Association
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1026, 1007, 1019, NULL, NULL, NULL, 0, NULL, NULL, NULL); -- Costs
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1027, 1008, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Rate
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1050, 1003, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- AdvertId
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1051, 1004, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Baskets
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1052, 1005, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Base
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1053, 1006, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Association
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1054, 1007, 1019, NULL, NULL, NULL, 0, NULL, NULL, NULL); -- Costs
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1055, 1008, 1019, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Rate
 -- Note = null, поэтому не создаем запись
 
 -- Заполняем значения для AuctionMetrics (объект 1020)
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1028, 1003, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- AdvertId
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1029, 1004, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Baskets
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1030, 1005, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Base
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1031, 1006, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Association
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1032, 1007, 1020, NULL, NULL, NULL, 0, NULL, NULL, NULL); -- Costs
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1033, 1008, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Rate
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1056, 1003, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- AdvertId
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1057, 1004, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Baskets
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1058, 1005, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Base
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1059, 1006, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Association
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1060, 1007, 1020, NULL, NULL, NULL, 0, NULL, NULL, NULL); -- Costs
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1061, 1008, 1020, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Rate
 -- Note = null, поэтому не создаем запись
 
+-- Заполняем значения для AutoMetrics Example 2 (объект 1022)
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1042, 1003, 1022, NULL, 100, NULL, NULL, NULL, NULL, NULL); -- AdvertId
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1043, 1004, 1022, NULL, 50, NULL, NULL, NULL, NULL, NULL); -- Baskets  
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1044, 1005, 1022, NULL, 75, NULL, NULL, NULL, NULL, NULL); -- Base
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1045, 1006, 1022, NULL, 25, NULL, NULL, NULL, NULL, NULL); -- Association
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1046, 1007, 1022, NULL, NULL, NULL, 1500.5, NULL, NULL, NULL); -- Costs
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1047, 1008, 1022, NULL, 95, NULL, NULL, NULL, NULL, NULL); -- Rate
+
 -- Заполняем значения для AnalyticsRecord (объект 1021)
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1034, 1010, 1021, NULL, NULL, NULL, NULL, CAST('2025-07-15T00:00:00' AS TIMESTAMP), NULL, NULL); -- Date
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1035, 1011, 1021, 'пт 5х260', NULL, NULL, NULL, NULL, NULL, NULL); -- Article
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1036, 1012, 1021, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Orders
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1037, 1013, 1021, NULL, 151, NULL, NULL, NULL, NULL, NULL); -- Stock
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1038, 1014, 1021, NULL, 2, NULL, NULL, NULL, NULL, NULL); -- TotalCart
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1062, 1010, 1021, NULL, NULL, NULL, NULL, CAST('2025-07-15T00:00:00' AS TIMESTAMP), NULL, NULL); -- Date
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1063, 1011, 1021, 'пт 5х260', NULL, NULL, NULL, NULL, NULL, NULL); -- Article
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1064, 1012, 1021, NULL, 0, NULL, NULL, NULL, NULL, NULL); -- Orders
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1065, 1013, 1021, NULL, 151, NULL, NULL, NULL, NULL, NULL); -- Stock
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1066, 1014, 1021, NULL, 2, NULL, NULL, NULL, NULL, NULL); -- TotalCart
 -- Price = null, поэтому не создаем запись
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1039, 1016, 1021, NULL, 1019, NULL, NULL, NULL, NULL, NULL); -- AutoMetrics (ссылка на объект 1019)
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1040, 1017, 1021, NULL, 1020, NULL, NULL, NULL, NULL, NULL); -- AuctionMetrics (ссылка на объект 1020)
-INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1041, 1018, 1021, 'пт', NULL, NULL, NULL, NULL, NULL, NULL); -- Tag
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1067, 1016, 1021, NULL, 1019, NULL, NULL, NULL, NULL, NULL); -- AutoMetrics (ссылка на объект 1019)
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1068, 1017, 1021, NULL, 1020, NULL, NULL, NULL, NULL, NULL); -- AuctionMetrics (ссылка на объект 1020)
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray) VALUES (1069, 1018, 1021, 'пт', NULL, NULL, NULL, NULL, NULL, NULL); -- Tag
+
+-- === RelatedMetrics[] - массив ссылок на AutoMetrics объекты ===
+-- RelatedMetrics[0] -> AutoMetrics Example (ID: 1019)
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray, _array_parent_id, _array_index) VALUES (1070, 1019, 1021, NULL, 1019, NULL, NULL, NULL, NULL, NULL, NULL, 0);
+
+-- RelatedMetrics[1] -> AutoMetrics Example 2 (ID: 1022)  
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray, _array_parent_id, _array_index) VALUES (1071, 1019, 1021, NULL, 1022, NULL, NULL, NULL, NULL, NULL, NULL, 1);
 
 INSERT INTO _permissions (_id, _id_user, _id_ref, _select, _insert, _update, _delete)
 VALUES (
@@ -2635,4 +1319,326 @@ VALUES (
     true,                        -- _update = разрешить изменение
     true                         -- _delete = разрешить удаление
 );
+
+
+
+-- Функция 2: Обработка сортировки ORDER BY с типизацией
+CREATE OR REPLACE FUNCTION build_order_conditions(
+    order_by jsonb,
+    table_alias text DEFAULT 'o'
+) RETURNS text
+LANGUAGE 'plpgsql'
+COST 50
+VOLATILE NOT LEAKPROOF
+AS $BODY$
+DECLARE
+    order_conditions text := 'ORDER BY ' || table_alias || '._id';  -- Базовая сортировка по ID
+BEGIN
+    -- Обрабатываем параметры сортировки если они есть
+    IF order_by IS NOT NULL AND jsonb_typeof(order_by) = 'array' THEN
+        order_conditions := 'ORDER BY ';
+        
+        -- Обрабатываем каждый элемент сортировки
+        FOR i IN 0..jsonb_array_length(order_by) - 1 LOOP
+            DECLARE
+                order_item jsonb := order_by->i;
+                field_name text := order_item->>'field';
+                direction text := COALESCE(order_item->>'direction', 'ASC');
+                order_clause text;
+            BEGIN
+                -- Формируем ORDER BY для поля из _values с padding для правильной сортировки чисел
+                order_clause := format('(
+                    SELECT CASE 
+                        WHEN v._String IS NOT NULL THEN v._String
+                        WHEN v._Long IS NOT NULL THEN LPAD(v._Long::text, 20, ''0'')
+                        WHEN v._Double IS NOT NULL THEN LPAD(REPLACE(v._Double::text, ''.'', ''~''), 25, ''0'')
+                        WHEN v._DateTime IS NOT NULL THEN TO_CHAR(v._DateTime, ''YYYY-MM-DD HH24:MI:SS.US'')
+                        WHEN v._Boolean IS NOT NULL THEN v._Boolean::text
+                        ELSE NULL
+                    END
+                    FROM _values v 
+                    JOIN _structures s ON v._id_structure = s._id 
+                    WHERE v._id_object = %s._id AND s._name = %L
+                    LIMIT 1
+                ) %s NULLS LAST', table_alias, field_name, direction);
+                
+                -- Добавляем запятую между элементами сортировки
+                IF i > 0 THEN
+                    order_conditions := order_conditions || ', ';
+                END IF;
+                order_conditions := order_conditions || order_clause;
+            END;
+        END LOOP;
+        
+        -- Добавляем дополнительную сортировку по ID для стабильности
+        order_conditions := order_conditions || ', ' || table_alias || '._id';
+    END IF;
+    
+    RETURN order_conditions;
+END;
+$BODY$;
+
+-- Комментарий к функции
+COMMENT ON FUNCTION build_order_conditions(jsonb, text) IS 'Модульная функция построения ORDER BY условий для сортировки по пользовательским полям из _values. Поддерживает множественную сортировку с правильной типизацией (LPAD для чисел, TO_CHAR для дат). Добавляет стабильную сортировку по ID.';
+
+-- ===== ГЛАВНЫЕ ФУНКЦИИ - КОМПОЗИЦИЯ МОДУЛЕЙ =====
+
+
+-- ====================================================================================================
+-- ТЕСТОВЫЕ ДАННЫЕ ДЛЯ ПРОВЕРКИ ИЕРАРХИЧЕСКИХ СТРУКТУР (Class полей)
+-- ====================================================================================================
+
+-- Схема для тестирования Person с иерархическими полями
+INSERT INTO _schemes (_id, _id_parent, _name, _alias, _name_space) 
+VALUES (9001, NULL, 'TestPerson', 'Тестовая персона с иерархическими полями', 'Test');
+
+-- Корневые поля схемы Person
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) 
+VALUES 
+    -- Простое строковое поле
+    (9101, NULL, 9001, NULL, -9223372036854775700, NULL, 'Name', 'Имя', 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Class поле Address с иерархическими дочерними полями
+    (9102, NULL, 9001, NULL, -9223372036854775675, NULL, 'Address', 'Адрес', 2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Простое числовое поле
+    (9103, NULL, 9001, NULL, -9223372036854775704, NULL, 'Age', 'Возраст', 3, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+-- Дочерние поля для Address (Class поле)  
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor)
+VALUES 
+    -- Address.Street
+    (9201, 9102, 9001, NULL, -9223372036854775700, NULL, 'Street', 'Улица', 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.Details (вложенный Class)  
+    (9202, 9102, 9001, NULL, -9223372036854775675, NULL, 'Details', 'Детали адреса', 2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.City
+    (9203, 9102, 9001, NULL, -9223372036854775700, NULL, 'City', 'Город', 3, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+-- Дочерние поля для Address.Details (вложенный Class)
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor)
+VALUES 
+    -- Address.Details.Building
+    (9301, 9202, 9001, NULL, -9223372036854775700, NULL, 'Building', 'Корпус', 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.Details.Floor
+    (9302, 9202, 9001, NULL, -9223372036854775704, NULL, 'Floor', 'Этаж', 2, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+-- Создаем тестовый объект Person
+INSERT INTO _objects (_id, _id_parent, _id_scheme, _id_owner, _id_who_change, _date_create, _date_modify, _date_begin, _date_complete, _key, _code_int, _code_string, _code_guid, _name, _note, _hash) 
+VALUES (9001, NULL, 9001, 1, 1, NOW(), NOW(), NULL, NULL, NULL, NULL, NULL, NULL, 'John Doe Test', NULL, NULL);
+
+-- Значения полей для объекта Person (ID=9001)
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray)
+VALUES 
+    -- Name = "John Doe"
+    (9401, 9101, 9001, 'John Doe', NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address = хеш (Class поле - будет игнорироваться, важны дочерние поля)
+    (9402, 9102, 9001, NULL, NULL, '12345678-1234-1234-1234-123456789abc'::uuid, NULL, NULL, NULL, NULL),
+    
+    -- Age = 30  
+    (9403, 9103, 9001, NULL, 30, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.Street = "Main Street 123"
+    (9404, 9201, 9001, 'Main Street 123', NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.Details = хеш (вложенный Class поле)
+    (9405, 9202, 9001, NULL, NULL, '87654321-4321-4321-4321-cba987654321'::uuid, NULL, NULL, NULL, NULL),
+    
+    -- Address.City = "Moscow" 
+    (9406, 9203, 9001, 'Moscow', NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.Details.Building = "Building A"
+    (9407, 9301, 9001, 'Building A', NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Address.Details.Floor = 5
+    (9408, 9302, 9001, NULL, 5, NULL, NULL, NULL, NULL, NULL);
+
+-- ====================================================================================================
+-- РАСШИРЕННЫЕ ТЕСТОВЫЕ ДАННЫЕ - МАССИВЫ CLASS ПОЛЕЙ (РЕЛЯЦИОННО) 
+-- ====================================================================================================
+
+-- Добавляем поле массива Contact[] в схему TestPerson
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) 
+VALUES (9104, NULL, 9001, NULL, -9223372036854775675, NULL, 'Contacts', 'Контакты (массив)', 4, NULL, NULL, true, NULL, NULL, NULL, NULL);
+
+-- Дочерние поля для Contact (элементы массива Contacts[])
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor)
+VALUES 
+    -- Contact.Type
+    (9401, 9104, 9001, NULL, -9223372036854775700, NULL, 'Type', 'Тип контакта', 1, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Contact.Value  
+    (9402, 9104, 9001, NULL, -9223372036854775700, NULL, 'Value', 'Значение', 2, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+    
+    -- Contact.Verified
+    (9403, 9104, 9001, NULL, -9223372036854775709, NULL, 'Verified', 'Проверено', 3, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+-- Добавляем поле массива простых строк Tags[]
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) 
+VALUES (9105, NULL, 9001, NULL, -9223372036854775700, NULL, 'Tags', 'Теги (массив строк)', 5, NULL, NULL, true, NULL, NULL, NULL, NULL);
+
+-- Добавляем поле массива чисел Scores[]
+INSERT INTO _structures (_id, _id_parent, _id_scheme, _id_override, _id_type, _id_list, _name, _alias, _order, _readonly, _allow_not_null, _is_array, _is_compress, _store_null, _default_value, _default_editor) 
+VALUES (9106, NULL, 9001, NULL, -9223372036854775704, NULL, 'Scores', 'Баллы (массив чисел)', 6, NULL, NULL, true, NULL, NULL, NULL, NULL);
+
+-- Данные для массива Contacts[] объекта Person (ID=9001) - РЕЛЯЦИОННО
+INSERT INTO _values (_id, _id_structure, _id_object, _String, _Long, _Guid, _Double, _DateTime, _Boolean, _ByteArray, _array_parent_id, _array_index)
+VALUES 
+    -- === Contacts[0] - Email контакт ===
+    -- Contacts[0].Type = "email"
+    (9501, 9401, 9001, 'email', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0),
+    
+    -- Contacts[0].Value = "john@example.com"
+    (9502, 9402, 9001, 'john@example.com', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0),
+    
+    -- Contacts[0].Verified = true
+    (9503, 9403, 9001, NULL, NULL, NULL, NULL, NULL, true, NULL, NULL, 0),
+    
+    -- === Contacts[1] - Phone контакт ===
+    -- Contacts[1].Type = "phone"
+    (9504, 9401, 9001, 'phone', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1),
+    
+    -- Contacts[1].Value = "+7-999-123-45-67"
+    (9505, 9402, 9001, '+7-999-123-45-67', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1),
+    
+    -- Contacts[1].Verified = false
+    (9506, 9403, 9001, NULL, NULL, NULL, NULL, NULL, false, NULL, NULL, 1),
+    
+    -- === Tags[] - массив простых строк ===
+    -- Tags[0] = "developer"
+    (9507, 9105, 9001, 'developer', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0),
+    
+    -- Tags[1] = "senior"  
+    (9508, 9105, 9001, 'senior', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1),
+    
+    -- Tags[2] = "fullstack"
+    (9509, 9105, 9001, 'fullstack', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 2),
+    
+    -- === Scores[] - массив чисел ===
+    -- Scores[0] = 85
+    (9510, 9106, 9001, NULL, 85, NULL, NULL, NULL, NULL, NULL, NULL, 0),
+    
+    -- Scores[1] = 92
+    (9511, 9106, 9001, NULL, 92, NULL, NULL, NULL, NULL, NULL, NULL, 1),
+    
+    -- Scores[2] = 78
+    (9512, 9106, 9001, NULL, 78, NULL, NULL, NULL, NULL, NULL, NULL, 2);
+
+-- Комментарий к тестовым данным
+/*
+ОЖИДАЕМЫЙ РЕЗУЛЬТАТ для get_object_json(9001) ТЕПЕРЬ:
+
+{
+  "id": 9001,
+  "name": "John Doe Test",
+  "scheme_id": 9001,  
+  "scheme_name": "TestPerson",
+  "properties": {
+    "Name": "John Doe",
+    "Address": {
+      "Street": "Main Street 123",
+      "Details": {
+        "Building": "Building A",
+        "Floor": 5
+      },
+      "City": "Moscow"
+    },
+    "Age": 30,
+    "Contacts": [
+      {
+        "Type": "email",
+        "Value": "john@example.com", 
+        "Verified": true
+      },
+      {
+        "Type": "phone",
+        "Value": "+7-999-123-45-67",
+        "Verified": false
+      }
+    ],
+    "Tags": ["developer", "senior", "fullstack"],
+    "Scores": [85, 92, 78]
+  }
+}
+
+СТРУКТУРА ДАННЫХ В _values:
+
+| _id | _id_structure | _id_object | _String | _array_parent_id | _array_index | Поле |
+|-----|---------------|------------|---------|------------------|--------------|------|
+| 9501| 9401 (Type)   | 9001       | email   | NULL             | 0            | Contacts[0].Type |
+| 9502| 9402 (Value)  | 9001       | john@...| NULL             | 0            | Contacts[0].Value |
+| 9503| 9403 (Verified)| 9001      | NULL    | NULL             | 0            | Contacts[0].Verified |
+| 9504| 9401 (Type)   | 9001       | phone   | NULL             | 1            | Contacts[1].Type |
+| 9505| 9402 (Value)  | 9001       | +7-999..| NULL             | 1            | Contacts[1].Value |
+| 9506| 9403 (Verified)| 9001      | NULL    | NULL             | 1            | Contacts[1].Verified |
+
+ТЕСТОВЫЕ ЗАПРОСЫ:
+SELECT get_object_json(9001, 10);
+SELECT * FROM v_objects_json WHERE object_id = 9001;
+
+=== ТЕСТ МАССИВОВ ССЫЛОК НА redbObject ===
+-- Тестируем AnalyticsRecord с массивом ссылок RelatedMetrics[]
+SELECT get_object_json(1021, 10);
+
+ОЖИДАЕМЫЙ РЕЗУЛЬТАТ для get_object_json(9001):
+{
+  "id": 9001,
+  "key": null,
+  "bool": null,
+  "hash": null,
+  "name": "John Doe Test",
+  "note": null,
+  "code_int": null,
+  "owner_id": 1,
+  "code_guid": null,
+  "parent_id": null,
+  "scheme_id": 9001,
+  "date_begin": null,
+  "properties": {
+    "Age": 30,
+    "Name": "John Doe",
+    "Tags": [
+      "developer",
+      "senior",
+      "fullstack"
+    ],
+    "Scores": [
+      85,
+      92,
+      78
+    ],
+    "Address": {
+      "City": "Moscow",
+      "Street": "Main Street 123",
+      "Details": {
+        "Floor": 5,
+        "Building": "Building A"
+      }
+    },
+    "Contacts": [
+      {
+        "Type": "email",
+        "Value": "john@example.com",
+        "Verified": true
+      },
+      {
+        "Type": "phone",
+        "Value": "+7-999-123-45-67",
+        "Verified": false
+      }
+    ]
+  },
+  "code_string": null,
+  "date_create": "2025-08-25T20:27:53.17372",
+  "date_modify": "2025-08-25T20:27:53.17372",
+  "scheme_name": "TestPerson",
+  "date_complete": null,
+  "who_change_id": 1
+}*/
+
+
+
 

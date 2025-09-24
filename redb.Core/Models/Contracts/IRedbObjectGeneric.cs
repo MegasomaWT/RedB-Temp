@@ -16,7 +16,7 @@ namespace redb.Core.Models.Contracts
         /// Заменяет необходимость работы с raw JSON или приведением типов
         /// </summary>
         TProps properties { get; set; }
-        
+
         /// <summary>
         /// Получить схему для типа TProps (с использованием кеша)
         /// Удобный метод для получения метаданных конкретного типа

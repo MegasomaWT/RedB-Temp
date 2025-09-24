@@ -1,0 +1,48 @@
+﻿@page
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>@ViewData["Title"]</title>
+    <link rel="stylesheet" href="~/css/dx.material.orange.light.css" />
+    <link rel="stylesheet" href="~/css/login.css" />
+    <script src="~/lib/jquery/dist/jquery.min.js"></script>
+    <script src="~/js/dx.all.js" asp-append-version="true"></script>
+    <script src="~/js/login.js" asp-append-version="true"></script>
+</head>
+@model LoginModel
+@{
+    ViewData["Title"] = "Log in";
+}
+
+<div style="align-content:center">
+    <div class="centered">
+        <img src="~/img/redb2.png" />
+        <h1>Sign in</h1>
+        <sectionLogin>
+            <form id="account" method="post">
+                <h2>Use a local account to log in.</h2>
+                <hr />
+                <div class="inputLogin"></div>
+                <div id="dlogin"></div>
+                <div class="inputLogin"></div>
+                <div id="dpassword"></div>
+                <div class="inputLogin"></div>
+                <div id="dsubmit"></div>
+                <div style="padding-top:40px"></div>
+                <div class="dPrivace">
+                    <p style="font-size: 13px;">
+                        By signing in, you agree to our
+                        <a style="color: rgb(255, 80, 0);" href="/Identity/Account/Privace">Privacy Policy.</a>
+                    </p>
+                </div>
+            </form>
+        </sectionLogin>
+        <iframe src="~/p5redb/p5redb.html" frameborder="0">
+        </iframe>
+        <p style="color:rgba(0, 0, 0, 0.1); text-align:center">↑ click and move ↑</p>
+    </div>
+</div>
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

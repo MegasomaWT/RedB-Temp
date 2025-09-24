@@ -1,0 +1,30 @@
+version: '3.8'
+services:
+  msdb:
+    restart: always
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    user: root
+    networks:
+      network: {}
+    container_name: msdb
+    ports:
+      - "1433:1433"
+    environment:
+      - MSSQL_SA_PASSWORD=1Ubuntu##
+      - ACCEPT_EULA=Y
+    volumes:
+      - ./data:/var/opt/mssql/data
+      - ./log:/var/opt/mssql/log
+      - ./secrets:/var/opt/mssql/secrets
+      - ./backup:/var/opt/mssql/backup
+      - ./source:/var/opt/mssql/source
+    healthcheck:
+      start_period: 1m
+      interval: 1m30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  network:
+    external: true
+    name: rinat-net

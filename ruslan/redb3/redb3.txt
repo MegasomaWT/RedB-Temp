@@ -1,0 +1,12 @@
+1. Базовые методы Linq блокируют древоспецифичные.
+2. Пустая query создается через Where, которая не приводится к Tree.
+// сделай поиск строки ниже
+return (ITreeQueryable<TProps>)emptyQuery.Where(x => false); // Приведение к ITreeQueryable
+3. Переопределенные ToListAsync и FirstOrDefaultAsync не вызываются после
+	приведения ITreeQueryable к IRedbQueryable. Отсюда глюки.
+4. OrderBy добавляет элементы в пустую query (см. скрины 1 и 2).
+5. BinaryExpression в PostgresOrderingExpressionParser:
+	не работают null выражения в ThenBy (может ещё в похожих методах)
+	.ThenBy(r => r.Auction != null) (см. скрин 3)
+6. TreeQueryAsync для СПИСКА родителей возвращает пустую query
+	(в тестах нет версии для списка родителей)

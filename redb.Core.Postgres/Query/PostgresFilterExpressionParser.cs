@@ -27,8 +27,6 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
             MethodCallExpression method => VisitMethodCallExpression(method),
             ConstantExpression constant when constant.Type == typeof(bool) => 
                 VisitConstantBooleanExpression(constant),
-            MemberExpression member when member.Type == typeof(bool) =>
-                VisitBooleanMemberExpression(member),
             _ => throw new NotSupportedException($"Expression type {expression.NodeType} is not supported")
         };
     }
@@ -90,18 +88,6 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         switch (unary.NodeType)
         {
             case ExpressionType.Not:
-                // Проверяем, это отрицание boolean свойства (!p.IsActive) или что-то другое
-                if (unary.Operand is MemberExpression member && member.Type == typeof(bool))
-                {
-                    // !p.IsActive интерпретируется как p.IsActive == false
-                    if (member.Member is System.Reflection.PropertyInfo propInfo && propInfo.PropertyType == typeof(bool))
-                    {
-                        var property = new redb.Core.Query.QueryExpressions.PropertyInfo(propInfo.Name, propInfo.PropertyType);
-                        return new ComparisonExpression(property, ComparisonOperator.Equal, false);
-                    }
-                }
-                
-                // Общий случай отрицания
                 var operand = VisitExpression(unary.Operand);
                 return new LogicalExpression(LogicalOperator.Not, new[] { operand });
 
@@ -114,48 +100,24 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
     {
         var methodName = method.Method.Name;
         var declaringType = method.Method.DeclaringType;
+        
+        // Contains методы обрабатываются специально
 
         // String методы
         if (declaringType == typeof(string))
         {
             return methodName switch
             {
-                "Contains" => VisitStringMethod(method, ComparisonOperator.Contains),
-                "StartsWith" => VisitStringMethod(method, ComparisonOperator.StartsWith),
-                "EndsWith" => VisitStringMethod(method, ComparisonOperator.EndsWith),
+                "Contains" => VisitStringMethodWithComparison(method, ComparisonOperator.Contains, ComparisonOperator.ContainsIgnoreCase),
+                "StartsWith" => VisitStringMethodWithComparison(method, ComparisonOperator.StartsWith, ComparisonOperator.StartsWithIgnoreCase),
+                "EndsWith" => VisitStringMethodWithComparison(method, ComparisonOperator.EndsWith, ComparisonOperator.EndsWithIgnoreCase),
                 _ => throw new NotSupportedException($"String method {methodName} is not supported")
             };
         }
 
-        // Массивы/коллекции свойств (x.Tags.Contains, x.Numbers.Any) - ПЕРВЫМ ДЕЛОМ!
-        if (method.Object != null && IsPropertyArrayAccess(method.Object))
-        {
-            return methodName switch
-            {
-                "Contains" => VisitArrayMethodCall(method, ArrayMethod.Contains),
-                "Any" when method.Arguments.Count == 0 => VisitArrayMethodCall(method, ArrayMethod.Any),
-                "Count" when method.Arguments.Count == 0 => VisitArrayMethodCall(method, ArrayMethod.Count),
-                _ => throw new NotSupportedException($"Array method {methodName} is not supported or has wrong arguments")
-            };
-        }
-
-        // Enumerable методы (Enumerable.Contains, Enumerable.Any) - проверяем аргументы!
+        // Enumerable методы
         if (declaringType == typeof(Enumerable))
         {
-            // Для Enumerable методов источник данных в первом аргументе
-            if (method.Arguments.Count > 0 && IsPropertyArrayAccess(method.Arguments[0]))
-            {
-                // Это вызов на массиве свойства: Enumerable.Any(x.Tags) из x.Tags.Any()
-                return methodName switch
-                {
-                    "Contains" when method.Arguments.Count == 2 => VisitArrayMethodCall(method, ArrayMethod.Contains),
-                    "Any" when method.Arguments.Count == 1 => VisitArrayMethodCall(method, ArrayMethod.Any),
-                    "Count" when method.Arguments.Count == 1 => VisitArrayMethodCall(method, ArrayMethod.Count),
-                    _ => throw new NotSupportedException($"Array method {methodName} via Enumerable is not supported or has wrong arguments")
-                };
-            }
-            
-            // Обычные Enumerable методы на коллекциях-константах
             return methodName switch
             {
                 "Contains" => VisitEnumerableContains(method),
@@ -163,10 +125,18 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
             };
         }
 
-        // Коллекции (List<T>, ICollection<T>, etc.) - collection.Contains(property) - ПОТОМ!
+        // Коллекции (массивы, List<T>, ICollection<T>, etc.)
         if (methodName == "Contains" && method.Object != null)
         {
             var objectType = method.Object.Type;
+            
+            // 🚀 МАССИВЫ: string[], int[], etc.
+            if (objectType.IsArray)
+            {
+                return VisitCollectionContains(method);
+            }
+            
+            // 📋 GENERIC КОЛЛЕКЦИИ: List<T>, ICollection<T>, etc.
             if (objectType.IsGenericType)
             {
                 var genericDef = objectType.GetGenericTypeDefinition();
@@ -184,7 +154,11 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         throw new NotSupportedException($"Method {declaringType?.Name}.{methodName} is not supported");
     }
 
-    private FilterExpression VisitStringMethod(MethodCallExpression method, ComparisonOperator op)
+    /// <summary>
+    /// 🎯 ЗАКАЗЧИКОВА СЕМАНТИКА: Обработка строковых методов с поддержкой StringComparison
+    /// Поддерживает: r.Article.Contains(filter, StringComparison.OrdinalIgnoreCase)
+    /// </summary>
+    private FilterExpression VisitStringMethodWithComparison(MethodCallExpression method, ComparisonOperator caseSensitiveOp, ComparisonOperator ignoreCaseOp)
     {
         if (method.Object == null)
             throw new ArgumentException("String method must have an object instance");
@@ -192,7 +166,57 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         var property = ExtractProperty(method.Object);
         var value = EvaluateExpression(method.Arguments[0]);
 
-        return new ComparisonExpression(property, op, value);
+        // 🚀 ПРОВЕРЯЕМ КОЛИЧЕСТВО АРГУМЕНТОВ
+        if (method.Arguments.Count == 1)
+        {
+            // Обычная версия: Contains(value) - учитывает регистр по умолчанию
+            return new ComparisonExpression(property, caseSensitiveOp, value);
+        }
+        else if (method.Arguments.Count == 2)
+        {
+            // 🎯 ЗАКАЗЧИКОВА ВЕРСИЯ: Contains(value, StringComparison)
+            var comparisonArg = method.Arguments[1];
+            var stringComparison = EvaluateStringComparison(comparisonArg);
+            
+            // Определяем оператор на основе StringComparison
+            var finalOperator = IsIgnoreCaseComparison(stringComparison) ? ignoreCaseOp : caseSensitiveOp;
+            
+            return new ComparisonExpression(property, finalOperator, value);
+        }
+        else
+        {
+            throw new NotSupportedException($"String method with {method.Arguments.Count} arguments is not supported");
+        }
+    }
+
+    /// <summary>
+    /// Извлечение StringComparison из выражения
+    /// </summary>
+    private StringComparison EvaluateStringComparison(Expression comparisonExpression)
+    {
+        var value = EvaluateExpression(comparisonExpression);
+        
+        if (value is StringComparison comparison)
+        {
+            return comparison;
+        }
+        
+        // Если не удалось извлечь, используем по умолчанию
+        return StringComparison.Ordinal;
+    }
+
+    /// <summary>
+    /// Проверка нужно ли игнорировать регистр
+    /// </summary>
+    private bool IsIgnoreCaseComparison(StringComparison comparison)
+    {
+        return comparison switch
+        {
+            StringComparison.CurrentCultureIgnoreCase => true,
+            StringComparison.InvariantCultureIgnoreCase => true,
+            StringComparison.OrdinalIgnoreCase => true,
+            _ => false
+        };
     }
 
     private FilterExpression VisitEnumerableContains(MethodCallExpression method)
@@ -204,10 +228,9 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         var sourceExpression = method.Arguments[0];
         var valueExpression = method.Arguments[1];
 
-        // Пытаемся понять структуру: source.Contains(property) или source.Contains(value)
+        // 🔍 СЛУЧАЙ 1: source.Contains(property) - property IN source
         if (IsPropertyAccess(valueExpression))
         {
-            // source.Contains(property) - property IN source
             var property = ExtractProperty(valueExpression);
             var values = EvaluateExpression(sourceExpression);
 
@@ -216,6 +239,18 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
                 var valuesList = enumerable.Cast<object>().ToList();
                 return new InExpression(property, valuesList);
             }
+        }
+        // 🚀 СЛУЧАЙ 2: source.Contains(value) где source=property (МАССИВЫ!)
+        else if (IsPropertyAccess(sourceExpression))
+        {
+            // Enumerable.Contains(p.Tags1, "senior") → p.Tags1 ArrayContains "senior"
+            var arrayProperty = ExtractProperty(sourceExpression);
+            var value = EvaluateExpression(valueExpression);
+            
+            // ArrayContains обнаружен и обрабатывается
+            
+            // 🎯 ЭТО МАССИВ - используем ArrayContains
+            return new ComparisonExpression(arrayProperty, ComparisonOperator.ArrayContains, value);
         }
 
         throw new NotSupportedException("Unsupported Contains expression structure");
@@ -230,19 +265,6 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
         // Это может быть полезно для условий типа Where(x => true) или Where(x => false)
         var dummyProperty = new redb.Core.Query.QueryExpressions.PropertyInfo("__constant", typeof(bool));
         return new ComparisonExpression(dummyProperty, ComparisonOperator.Equal, value);
-    }
-
-    private FilterExpression VisitBooleanMemberExpression(MemberExpression member)
-    {
-        // Прямое обращение к boolean свойству: p.IsActive
-        // Интерпретируется как p.IsActive == true
-        if (member.Member is System.Reflection.PropertyInfo propInfo && propInfo.PropertyType == typeof(bool))
-        {
-            var property = new redb.Core.Query.QueryExpressions.PropertyInfo(propInfo.Name, propInfo.PropertyType);
-            return new ComparisonExpression(property, ComparisonOperator.Equal, true);
-        }
-
-        throw new ArgumentException($"Boolean member expression must be a boolean property, got {member.Member?.GetType().Name}");
     }
 
     private (redb.Core.Query.QueryExpressions.PropertyInfo Property, object? Value) ExtractPropertyAndValue(BinaryExpression binary)
@@ -268,83 +290,53 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
 
     private bool IsPropertyAccess(Expression expression)
     {
-        // Обычные свойства: x.Name
-        if (expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo)
-        {
-            return true;
-        }
-        
-        // Методы массивов свойств: x.Tags.Count(), x.Numbers.Any()
-        if (expression is MethodCallExpression method)
-        {
-            // Instance методы: x.Tags.Count() где Object = x.Tags
-            if (method.Object != null && IsPropertyArrayAccess(method.Object))
-            {
-                var methodName = method.Method.Name;
-                return methodName is "Count" or "Any" && method.Arguments.Count == 0;
-            }
-            
-            // Статические методы Enumerable: Enumerable.Count(x.Tags) где Arguments[0] = x.Tags
-            if (method.Object == null && method.Method.DeclaringType?.Name == "Enumerable")
-            {
-                var methodName = method.Method.Name;
-                if (methodName is "Count" or "Any" && method.Arguments.Count >= 1)
-                {
-                    var firstArg = method.Arguments[0];
-                    if (IsPropertyArrayAccess(firstArg))
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-        
-        return false;
+        return expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo;
     }
 
+    /// <summary>
+    /// 🎯 ЗАКАЗЧИКОВА СЕМАНТИКА: Извлечение свойства с поддержкой nullable полей (r.Auction.Costs)
+    /// </summary>
     private redb.Core.Query.QueryExpressions.PropertyInfo ExtractProperty(Expression expression)
     {
-        // Обычные свойства: x.Name
         if (expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo propInfo)
         {
-            return new redb.Core.Query.QueryExpressions.PropertyInfo(propInfo.Name, propInfo.PropertyType);
-        }
-        
-        // Методы массивов свойств: x.Tags.Count(), x.Numbers.Any()
-        if (expression is MethodCallExpression method)
-        {
-            var methodName = method.Method.Name;
-            
-            // Instance методы: x.Tags.Count() где Object = x.Tags
-            if (method.Object != null && IsPropertyArrayAccess(method.Object) && 
-                methodName is "Count" or "Any" && method.Arguments.Count == 0)
-            {
-                // Извлекаем базовое свойство (x.Tags -> Tags)
-                var baseProperty = ExtractProperty(method.Object!);
-                
-                // Возвращаем PropertyInfo с специальным именем для SQL
-                var propertyName = $"{baseProperty.Name}.{methodName}()";
-                return new redb.Core.Query.QueryExpressions.PropertyInfo(propertyName, typeof(int));
-            }
-            
-            // Статические методы Enumerable: Enumerable.Count(x.Tags) где Arguments[0] = x.Tags
-            if (method.Object == null && method.Method.DeclaringType?.Name == "Enumerable" &&
-                methodName is "Count" or "Any" && method.Arguments.Count >= 1)
-            {
-                var firstArg = method.Arguments[0];
-                if (IsPropertyArrayAccess(firstArg))
-                {
-                    // Извлекаем базовое свойство (x.Tags -> Tags)
-                    var baseProperty = ExtractProperty(firstArg);
-                    
-                    // Возвращаем PropertyInfo с специальным именем для SQL
-                    var propertyName = $"{baseProperty.Name}.{methodName}()";
-                    return new redb.Core.Query.QueryExpressions.PropertyInfo(propertyName, typeof(int));
-                }
-            }
+            // 🚀 ПОДДЕРЖКА ВЛОЖЕННЫХ ПОЛЕЙ для nullable объектов
+            var fullPath = BuildPropertyPath(member);
+            return new redb.Core.Query.QueryExpressions.PropertyInfo(fullPath, propInfo.PropertyType);
         }
 
         throw new ArgumentException($"Expression must be a property access, got {expression.GetType().Name}");
+    }
+
+    /// <summary>
+    /// 🎯 НОВЫЙ МЕТОД: Построение полного пути свойства для nullable полей (Auction.Costs)
+    /// </summary>
+    private string BuildPropertyPath(MemberExpression memberExpression)
+    {
+        var pathParts = new List<string>();
+        var current = memberExpression;
+
+        // Обходим цепочку свойств снизу вверх
+        while (current != null && current.Member is System.Reflection.PropertyInfo)
+        {
+            pathParts.Add(current.Member.Name);
+            
+            if (current.Expression is MemberExpression parentMember)
+            {
+                current = parentMember;
+            }
+            else
+            {
+                // Дошли до корня (параметра r)
+                break;
+            }
+        }
+
+        // Переворачиваем порядок (был снизу вверх, нужен сверху вниз)
+        pathParts.Reverse();
+        
+        // Для случая r.Auction.Costs получаем "Auction.Costs"
+        return string.Join(".", pathParts);
     }
 
     private object? EvaluateExpression(Expression expression)
@@ -363,17 +355,20 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
 
     private FilterExpression VisitCollectionContains(MethodCallExpression method)
     {
+        // VisitCollectionContains для обработки collection.Contains(value)
+        
         // collection.Contains(value)
         if (method.Arguments.Count != 1)
             throw new ArgumentException("Collection Contains method must have exactly 1 argument");
 
         var collectionExpression = method.Object!;
         var valueExpression = method.Arguments[0];
+        
+        // Анализ Collection.Contains() выражения
 
-        // Проверяем, что аргумент - это свойство
+        // 🔍 СЛУЧАЙ 1: collection.Contains(property) - property IN collection
         if (IsPropertyAccess(valueExpression))
         {
-            // collection.Contains(property) - property IN collection
             var property = ExtractProperty(valueExpression);
             var values = EvaluateExpression(collectionExpression);
 
@@ -387,77 +382,18 @@ public class PostgresFilterExpressionParser : IFilterExpressionParser
                 throw new ArgumentException("Collection expression must evaluate to IEnumerable");
             }
         }
+        // 🚀 СЛУЧАЙ 2: property.Contains(value) - value IN property (МАССИВЫ!)
+        else if (IsPropertyAccess(collectionExpression))
+        {
+            var arrayProperty = ExtractProperty(collectionExpression);
+            var value = EvaluateExpression(valueExpression);
+            
+            // 🎯 ЭТО МАССИВ - используем ArrayContains
+            return new ComparisonExpression(arrayProperty, ComparisonOperator.ArrayContains, value);
+        }
         else
         {
-            throw new NotSupportedException("Collection Contains argument must be a property access");
+            throw new NotSupportedException("Unsupported Contains expression structure");
         }
-    }
-
-    /// <summary>
-    /// Проверяет, является ли выражение обращением к свойству-массиву (x.Tags, x.Numbers)
-    /// </summary>
-    private bool IsPropertyArrayAccess(Expression expression)
-    {
-        if (expression is MemberExpression member && member.Member is System.Reflection.PropertyInfo propInfo)
-        {
-            var propType = propInfo.PropertyType;
-            
-            // Проверяем что это коллекция/массив
-            if (propType.IsGenericType)
-            {
-                var genericDef = propType.GetGenericTypeDefinition();
-                return genericDef == typeof(List<>) || 
-                       genericDef == typeof(IList<>) ||
-                       genericDef == typeof(ICollection<>) ||
-                       genericDef == typeof(IEnumerable<>) ||
-                       propType.GetInterfaces().Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>));
-            }
-            
-            // Проверяем массивы T[]
-            return propType.IsArray;
-        }
-        
-        return false;
-    }
-
-    /// <summary>
-    /// Обрабатывает вызовы методов на массивах (x.Tags.Contains, x.Tags.Any)
-    /// Поддерживает как instance методы (x.Tags.Any()), так и Enumerable методы (Enumerable.Any(x.Tags))
-    /// </summary>
-    private FilterExpression VisitArrayMethodCall(MethodCallExpression method, ArrayMethod arrayMethod)
-    {
-        MemberExpression? propertyExpression = null;
-        object? argument = null;
-
-        if (method.Object is MemberExpression member)
-        {
-            // Instance метод: x.Tags.Contains("test")
-            propertyExpression = member;
-            
-            // Для Contains получаем аргумент
-            if (arrayMethod == ArrayMethod.Contains && method.Arguments.Count > 0)
-            {
-                argument = EvaluateExpression(method.Arguments[0]);
-            }
-        }
-        else if (method.Arguments.Count > 0 && method.Arguments[0] is MemberExpression arrayMember)
-        {
-            // Enumerable метод: Enumerable.Any(x.Tags) или Enumerable.Contains(x.Tags, "test")
-            propertyExpression = arrayMember;
-            
-            // Для Contains получаем второй аргумент
-            if (arrayMethod == ArrayMethod.Contains && method.Arguments.Count > 1)
-            {
-                argument = EvaluateExpression(method.Arguments[1]);
-            }
-        }
-
-        if (propertyExpression != null)
-        {
-            var property = ExtractProperty(propertyExpression);
-            return new ArrayMethodExpression(property, arrayMethod, argument);
-        }
-        
-        throw new NotSupportedException($"Array method {arrayMethod} requires property access (x.PropertyName.{method.Method.Name})");
     }
 }

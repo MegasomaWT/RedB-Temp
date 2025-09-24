@@ -1,0 +1,70 @@
+services:
+  zookeeper:
+    restart: always
+    user: root
+    container_name: zookeeper
+#    image: bitnami/zookeeper:latest
+    image: wurstmeister/zookeeper:latest
+    environment:
+      ALLOW_ANONYMOUS_LOGIN: yes
+    networks:
+      network: {}
+    ports:
+      - "2181:2181"
+
+  kafka:
+    restart: always
+    user: root
+    build: .
+    container_name: kafka
+    image: wurstmeister/kafka:latest
+    networks:
+      network: {}
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      DOCKER_API_VERSION: 1.22
+      KAFKA_ADVERTISED_HOST_NAME: kafka
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+#      KAFKA_OPTS: "-Djava.securety.auth.login.config=/etc/kafka/kafka_server_jaas.conf"
+      KAFKA_CREATE_TOPICS: "topic1:3:1,topic2:1:1:compact"
+    depends_on:
+      - zookeeper
+    volumes:
+      - ./:/etc/kafka
+
+  obsidiandynamics:
+    restart: always
+    user: root
+    container_name: kafdrop
+    image: obsidiandynamics/kafdrop:latest
+    networks:
+      network: {}
+    ports:
+      - "9000:9000"
+    environment:
+      KAFKA_BROKERCONNECT: kafka:9092
+      KAFKA_PROPERTIES: "$(cat kafka.properties | base64)" 
+      KAFKA_TRUSTSTORE: "$(cat myTrustStore | base64)" 
+      KAFKA_KEYSTORE: "$(cat myKeyStore | base64)" 
+    depends_on:
+      - kafka
+
+  xeotek:
+    restart: always
+    user: root
+    container_name: xeotek
+    image: xeotek/kadeck-allinone:latest
+    networks:
+      network: {}
+    ports:
+      - "9001:80"
+    depends_on:
+      - kafka
+
+networks:
+  network:
+    external: true
+    name: rinat-net

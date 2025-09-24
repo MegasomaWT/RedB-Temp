@@ -25,6 +25,14 @@ namespace redb.Core.Models.Entities
         public DateTime? DateDismiss => _user.DateDismiss;
         public string? Phone => _user.Phone;
         public string? Email => _user.Email;
+        
+        // === НОВЫЕ ПОЛЯ ===
+        public long? Key => _user.Key;
+        public long? CodeInt => _user.CodeInt;
+        public string? CodeString => _user.CodeString;
+        public Guid? CodeGuid => _user.CodeGuid;
+        public string? Note => _user.Note;
+        public Guid? Hash => _user.Hash;
 
         /// <summary>
         /// Системный пользователь (SYS_USER_ID = 0)
@@ -39,7 +47,15 @@ namespace redb.Core.Models.Entities
             DateRegister = DateTime.MinValue,
             DateDismiss = null,
             Phone = null,
-            Email = null
+            Email = null,
+            
+            // === НОВЫЕ ПОЛЯ ДЛЯ СИСТЕМНОГО ПОЛЬЗОВАТЕЛЯ ===
+            Key = null,
+            CodeInt = 0,  // Системный код
+            CodeString = "SYS",
+            CodeGuid = new Guid("00000000-0000-0000-0000-000000000001"), // Предопределенный GUID для системы
+            Note = "Системный пользователь REDB",
+            Hash = null  // Хеш для системного пользователя не требуется
         });
 
         /// <summary>
@@ -59,7 +75,16 @@ namespace redb.Core.Models.Entities
 
         public override string ToString()
         {
-            return $"User {Id}: {Login} ({Name}) - {(Enabled ? "Active" : "Disabled")}";
+            var status = Enabled ? "Active" : "Disabled";
+            var codes = new List<string>();
+            
+            if (CodeInt.HasValue) codes.Add($"Int={CodeInt}");
+            if (!string.IsNullOrEmpty(CodeString)) codes.Add($"Str={CodeString}");
+            if (Key.HasValue) codes.Add($"Key={Key}");
+            
+            var codesStr = codes.Count > 0 ? $" [{string.Join(", ", codes)}]" : "";
+            
+            return $"User {Id}: {Login} ({Name}) - {status}{codesStr}";
         }
     }
 }

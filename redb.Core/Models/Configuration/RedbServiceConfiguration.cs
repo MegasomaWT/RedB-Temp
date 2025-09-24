@@ -124,6 +124,18 @@ namespace redb.Core.Models.Configuration
         /// </summary>
         public long SystemUserId { get; set; } = 0;
 
+        // === НАСТРОЙКИ EAV СОХРАНЕНИЯ ===
+
+        /// <summary>
+        /// Стратегия сохранения EAV свойств
+        /// </summary>
+        [JsonConverter(typeof(EavSaveStrategyJsonConverter))]
+        public EavSaveStrategy EavSaveStrategy { get; set; } = EavSaveStrategy.ChangeTracking;
+
+
+
+
+
         // === НАСТРОЙКИ СЕРИАЛИЗАЦИИ ===
 
         /// <summary>
@@ -250,6 +262,24 @@ namespace redb.Core.Models.Configuration
         /// Вернуть null/false без ошибки
         /// </summary>
         ReturnNull
+    }
+
+    /// <summary>
+    /// Стратегия сохранения EAV свойств
+    /// </summary>
+    public enum EavSaveStrategy
+    {
+        /// <summary>
+        /// Простая стратегия - всегда DELETE + INSERT всех свойств
+        /// Надежная, но неэффективная для больших объектов
+        /// </summary>
+        DeleteInsert,
+        
+        /// <summary>
+        /// Эффективная стратегия - сравнение с БД и обновление только измененных свойств
+        /// Рекомендуется по умолчанию
+        /// </summary>
+        ChangeTracking
     }
 
     /// <summary>

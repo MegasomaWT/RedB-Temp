@@ -1,0 +1,99 @@
+                     jsonb_pretty                      
+-------------------------------------------------------
+ {                                                    +
+     "id": 1080002,                                   +
+     "key": null,                                     +
+     "bool": null,                                    +
+     "hash": "66cdef01-eec8-9f5a-26e0-2e2f876f7c27",  +
+     "name": "Смешанный тестовый объект",             +
+     "note": "Тест новой парадигмы с бизнес-классами",+
+     "code_int": null,                                +
+     "owner_id": 0,                                   +
+     "code_guid": null,                               +
+     "parent_id": null,                               +
+     "scheme_id": 1000002,                            +
+     "date_begin": null,                              +
+     "properties": {                                  +
+         "Age": 30,                                   +
+         "Tag": "mixed-test",                         +
+         "Date": "2025-08-29T00:00:00",               +
+         "Name": "John Doe",                          +
+         "Stock": 100,                                +
+         "Tags1": [                                   +
+             "developer",                             +
+             "senior",                                +
+             "fullstack"                              +
+         ],                                           +
+         "Tags2": [                                   +
+             "JJJdeveloper",                          +
+             "!!!senior",                             +
+             "_____fullstack"                         +
+         ],                                           +
+         "Article": "Тестовый артикул",               +
+         "Scores1": [                                 +
+             85,                                      +
+             92,                                      +
+             78                                       +
+         ],                                           +
+         "Scores2": [                                 +
+             33,                                      +
+             22,                                      +
+             11                                       +
+         ],                                           +
+         "Address1": {                                +
+             "Details": {                             +
+                 "Tags1": [                           +
+                 ],                                   +
+                 "Tags2": [                           +
+                 ],                                   +
+                 "Scores1": [                         +
+                 ],                                   +
+                 "Scores2": [                         +
+                 ]                                    +
+             }                                        +
+         },                                           +
+         "Address2": {                                +
+             "Details": {                             +
+                 "Tags1": [                           +
+                 ],                                   +
+                 "Tags2": [                           +
+                 ],                                   +
+                 "Scores1": [                         +
+                 ],                                   +
+                 "Scores2": [                         +
+                 ]                                    +
+             }                                        +
+         },                                           +
+         "Contacts": [                                +
+             {                                        +
+                 "Type": "email",                     +
+                 "Value": "john@example.com",         +
+                 "Verified": true                     +
+             },                                       +
+             {                                        +
+                 "Type": "phone",                     +
+                 "Value": "+7-999-123-45-67",         +
+                 "Verified": false                    +
+             }                                        +
+         ],                                           +
+         "RelatedMetrics": [                          +
+             {                                        +
+                 "error": "Object not found"          +
+             },                                       +
+             {                                        +
+                 "error": "Object not found"          +
+             },                                       +
+             {                                        +
+                 "error": "Object not found"          +
+             }                                        +
+         ]                                            +
+     },                                               +
+     "code_string": null,                             +
+     "date_create": "2025-08-29T22:59:39.154322",     +
+     "date_modify": "2025-08-29T22:59:39.154407",     +
+     "scheme_name": "MixedTestProps",                 +
+     "date_complete": null,                           +
+     "who_change_id": 0                               +
+ }
+(1 row)
+

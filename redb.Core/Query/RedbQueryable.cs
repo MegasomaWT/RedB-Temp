@@ -36,6 +36,12 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
         var newContext = _context.Clone();
         var filterExpression = _filterParser.ParseFilter(predicate);
         
+        // ✅ ИСПРАВЛЕНИЕ: Проверяем на пустой фильтр (Where(x => false))
+        if (IsEmptyFilter(filterExpression))
+        {
+            newContext.IsEmpty = true;
+        }
+        
         // Если уже есть фильтр, объединяем через AND
         if (newContext.Filter != null)
         {
@@ -59,6 +65,9 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
         
         var ordering = _orderingParser.ParseOrdering(keySelector, SortDirection.Ascending);
         newContext.Orderings.Add(ordering);
+        
+        // ✅ ИСПРАВЛЕНИЕ: Сохраняем IsEmpty флаг после OrderBy
+        // Даже если добавили ordering, query может оставаться пустой (Where(x => false))
 
         return new RedbQueryable<TProps>(_provider, newContext, _filterParser, _orderingParser);
     }
@@ -70,6 +79,9 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
         
         var ordering = _orderingParser.ParseOrdering(keySelector, SortDirection.Descending);
         newContext.Orderings.Add(ordering);
+        
+        // ✅ ИСПРАВЛЕНИЕ: Сохраняем IsEmpty флаг после OrderByDescending
+        // IsEmpty уже скопирован в Clone(), дополнительных действий не требуется
 
         return new RedbQueryable<TProps>(_provider, newContext, _filterParser, _orderingParser);
     }
@@ -80,6 +92,9 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
         
         var ordering = _orderingParser.ParseOrdering(keySelector, SortDirection.Ascending);
         newContext.Orderings.Add(ordering);
+        
+        // ✅ ИСПРАВЛЕНИЕ: Сохраняем IsEmpty флаг после ThenBy  
+        // IsEmpty уже скопирован в Clone(), дополнительных действий не требуется
 
         return new RedbQueryable<TProps>(_provider, newContext, _filterParser, _orderingParser);
     }
@@ -90,14 +105,17 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
         
         var ordering = _orderingParser.ParseOrdering(keySelector, SortDirection.Descending);
         newContext.Orderings.Add(ordering);
+        
+        // ✅ ИСПРАВЛЕНИЕ: Сохраняем IsEmpty флаг после ThenByDescending
+        // IsEmpty уже скопирован в Clone(), дополнительных действий не требуется
 
         return new RedbQueryable<TProps>(_provider, newContext, _filterParser, _orderingParser);
     }
 
     public virtual IRedbQueryable<TProps> Take(int count)
     {
-        if (count < 0)
-            throw new ArgumentException("Take count must be non-negative", nameof(count));
+        if (count <= 0)
+            throw new ArgumentException("Take count must be positive", nameof(count));
             
         var newContext = _context.Clone();
         newContext.Limit = count;
@@ -214,6 +232,17 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
         return new RedbQueryable<TProps>(_provider, newContext, _filterParser, _orderingParser);
     }
 
+    public virtual IRedbQueryable<TProps> WithMaxRecursionDepth(int depth)
+    {
+        if (depth < 1)
+            throw new ArgumentException("Max recursion depth must be positive", nameof(depth));
+            
+        var newContext = _context.Clone();
+        newContext.MaxRecursionDepth = depth;
+        
+        return new RedbQueryable<TProps>(_provider, newContext, _filterParser, _orderingParser);
+    }
+
     /// <summary>
     /// Строит выражение для выполнения запроса
     /// </summary>
@@ -231,5 +260,24 @@ public class RedbQueryable<TProps> : IRedbQueryable<TProps>, IOrderedRedbQueryab
     {
         // Аналогично для Count
         return Expression.Constant(_context);
+    }
+    
+    /// <summary>
+    /// ✅ НОВЫЙ МЕТОД: Определяет является ли фильтр пустым (Where(x => false))
+    /// </summary>
+    private bool IsEmptyFilter(FilterExpression filter)
+    {
+        // Проверяем на константный false фильтр (создается для Where(x => false))
+        if (filter is ComparisonExpression comparison && 
+            comparison.Property.Name == "__constant" &&
+            comparison.Property.Type == typeof(bool) &&
+            comparison.Operator == ComparisonOperator.Equal &&
+            comparison.Value is bool boolValue && 
+            boolValue == false)
+        {
+            return true;
+        }
+        
+        return false;
     }
 }

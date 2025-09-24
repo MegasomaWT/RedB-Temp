@@ -45,26 +45,6 @@ public class PostgresQueryProvider : IRedbQueryProvider
         return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
     }
 
-    /// <summary>
-    /// Создать новый запрос для дочерних объектов указанной схемы
-    /// </summary>
-    public IRedbQueryable<TProps> CreateChildrenQuery<TProps>(long schemeId, long parentId, long? userId = null, bool checkPermissions = false) 
-        where TProps : class, new()
-    {
-        var context = new QueryContext<TProps>(schemeId, userId, checkPermissions, parentId);
-        return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
-    }
-
-    /// <summary>
-    /// Создать новый запрос для всех потомков указанной схемы (рекурсивный поиск)
-    /// </summary>
-    public IRedbQueryable<TProps> CreateDescendantsQuery<TProps>(long schemeId, long parentId, int maxDepth, long? userId = null, bool checkPermissions = false) 
-        where TProps : class, new()
-    {
-        var context = new QueryContext<TProps>(schemeId, userId, checkPermissions, parentId, maxDepth);
-        return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
-    }
-
     public async Task<object> ExecuteAsync(Expression expression, Type elementType)
     {
         // Извлекаем QueryContext из выражения
@@ -122,77 +102,17 @@ public class PostgresQueryProvider : IRedbQueryProvider
         var orderByJson = BuildOrderByJson(context);
         
         // Выполняем поиск с лимитом 0 для получения только count
-        SearchJsonResult result;
-        
-        // Определяем какой тип запроса: batch vs одиночный, descendants vs children vs базовый
-        if (context.ParentIds?.Length > 0)
-        {
-            if (context.MaxDepth.HasValue)
-            {
-                // Batch descendants count: 8 параметров с parent_ids массивом
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}, {5}) as result";
+        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}::jsonb, {3}) as result";
 
-                _logger?.LogDebug("LINQ Count Query (Batch Descendants): SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}, ParentIds={ParentIds}, MaxDepth={MaxDepth}", 
-                    context.SchemeId, facetFilters, orderByJson, context.ParentIds, context.MaxDepth);
+        _logger?.LogDebug("LINQ Count Query: SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}", 
+            context.SchemeId, facetFilters, orderByJson);
 
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentIds, context.MaxDepth.Value)
-                    .FirstOrDefaultAsync();
-            }
-            else
-            {
-                // Batch children count: 7 параметров с parent_ids массивом
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}) as result";
+        var result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+            context.SchemeId, facetFilters, orderByJson ?? "null", 
+            context.MaxRecursionDepth ?? 10) // 🆕 max_recursion_depth (default 10)
+            .FirstOrDefaultAsync();
 
-                _logger?.LogDebug("LINQ Count Query (Batch Children): SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}, ParentIds={ParentIds}", 
-                    context.SchemeId, facetFilters, orderByJson, context.ParentIds);
-
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentIds)
-                    .FirstOrDefaultAsync();
-            }
-        }
-        else if (context.ParentId.HasValue)
-        {
-            if (context.MaxDepth.HasValue)
-            {
-                // Одиночный descendants count: 8 параметров с parent_id
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}, {5}) as result";
-
-                _logger?.LogDebug("LINQ Count Query (Descendants): SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}, ParentId={ParentId}, MaxDepth={MaxDepth}", 
-                    context.SchemeId, facetFilters, orderByJson, context.ParentId, context.MaxDepth);
-
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentId.Value, context.MaxDepth.Value)
-                    .FirstOrDefaultAsync();
-            }
-            else
-            {
-                // Одиночный children count: 7 параметров с parent_id
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb, {4}) as result";
-
-                _logger?.LogDebug("LINQ Count Query (Children): SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}, ParentId={ParentId}", 
-                    context.SchemeId, facetFilters, orderByJson, context.ParentId);
-
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null", context.ParentId.Value)
-                    .FirstOrDefaultAsync();
-            }
-        }
-        else
-        {
-            // Базовый запрос: 6 параметров (без parent ограничений)
-            var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, 0, 0, {2}, {3}::jsonb) as result";
-
-            _logger?.LogDebug("LINQ Count Query (Basic): SchemeId={SchemeId}, Filters={Filters}, OrderBy={OrderBy}", 
-                context.SchemeId, facetFilters, orderByJson);
-
-            result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                context.SchemeId, facetFilters, context.IsDistinct, orderByJson ?? "null")
-                .FirstOrDefaultAsync();
-        }
-
-        if (result?.result != null)
+                if (result?.result != null)
         {
             var jsonDoc = System.Text.Json.JsonDocument.Parse(result.result);
             if (jsonDoc.RootElement.TryGetProperty("total_count", out var totalCountElement))
@@ -209,129 +129,52 @@ public class PostgresQueryProvider : IRedbQueryProvider
 
     private async Task<object> ExecuteToListAsync<TProps>(QueryContext<TProps> context, Type propsType) where TProps : class, new()
     {
-        // Оптимизация: если Limit = 0, сразу возвращаем пустой список без SQL запроса
-        if (context.Limit == 0)
-            return new List<RedbObject<TProps>>();
-        
         var facetFilters = _facetBuilder.BuildFacetFilters(context.Filter);
         var parameters = _facetBuilder.BuildQueryParameters(context.Limit, context.Offset);
         var orderByJson = BuildOrderByJson(context);
 
         // Строим SQL запрос - функция возвращает jsonb
-        SearchJsonResult result;
-        
-        // Определяем какой тип запроса: batch vs одиночный, descendants vs children vs базовый
-        if (context.ParentIds?.Length > 0)
-        {
-            if (context.MaxDepth.HasValue)
-            {
-                // Batch descendants: 8 параметров с parent_ids массивом
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}, {7}) as result";
+        var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}::jsonb, {5}) as result";
 
-                _logger?.LogDebug("LINQ ToList Query (Batch Descendants): SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}, ParentIds={ParentIds}, MaxDepth={MaxDepth}", 
-                    context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson, context.ParentIds, context.MaxDepth);
+        _logger?.LogDebug("LINQ ToList Query: SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}", 
+            context.SchemeId, facetFilters, parameters.Limit?.ToString() ?? "NULL (все записи)", parameters.Offset ?? 0, orderByJson);
 
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, 
-                    facetFilters, 
-                    parameters.Limit ?? 100, 
-                    parameters.Offset ?? 0,
-                    context.IsDistinct,
-                    orderByJson ?? "null",
-                    context.ParentIds,
-                    context.MaxDepth.Value)
-                    .FirstOrDefaultAsync();
-            }
-            else
-            {
-                // Batch children: 7 параметров с parent_ids массивом
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}) as result";
+        // Логирование SQL запроса для отладки
+        _logger?.LogDebug("LINQ SQL Query: {SQL}", sql);
+        _logger?.LogDebug("LINQ SQL Params: SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}", 
+            context.SchemeId, facetFilters, parameters.Limit?.ToString() ?? "NULL (все записи)", parameters.Offset ?? 0);
 
-                _logger?.LogDebug("LINQ ToList Query (Batch Children): SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}, ParentIds={ParentIds}", 
-                    context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson, context.ParentIds);
-
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, 
-                    facetFilters, 
-                    parameters.Limit ?? 100, 
-                    parameters.Offset ?? 0,
-                    context.IsDistinct,
-                    orderByJson ?? "null",
-                    context.ParentIds)
-                    .FirstOrDefaultAsync();
-            }
-        }
-        else if (context.ParentId.HasValue)
-        {
-            if (context.MaxDepth.HasValue)
-            {
-                // Одиночный descendants: 8 параметров с parent_id
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}, {7}) as result";
-
-                _logger?.LogDebug("LINQ ToList Query (Descendants): SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}, ParentId={ParentId}, MaxDepth={MaxDepth}", 
-                    context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson, context.ParentId, context.MaxDepth);
-
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, 
-                    facetFilters, 
-                    parameters.Limit ?? 100, 
-                    parameters.Offset ?? 0,
-                    context.IsDistinct,
-                    orderByJson ?? "null",
-                    context.ParentId.Value,
-                    context.MaxDepth.Value)
-                    .FirstOrDefaultAsync();
-            }
-            else
-            {
-                // Одиночный children: 7 параметров с parent_id
-                var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb, {6}) as result";
-
-                _logger?.LogDebug("LINQ ToList Query (Children): SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}, ParentId={ParentId}", 
-                    context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson, context.ParentId);
-
-                result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                    context.SchemeId, 
-                    facetFilters, 
-                    parameters.Limit ?? 100, 
-                    parameters.Offset ?? 0,
-                    context.IsDistinct,
-                    orderByJson ?? "null",
-                    context.ParentId.Value)
-                    .FirstOrDefaultAsync();
-            }
-        }
-        else
-        {
-            // Базовый запрос: 6 параметров (без parent ограничений)
-            var sql = "SELECT search_objects_with_facets({0}, {1}::jsonb, {2}, {3}, {4}, {5}::jsonb) as result";
-
-            _logger?.LogDebug("LINQ ToList Query (Basic): SchemeId={SchemeId}, Filters={Filters}, Limit={Limit}, Offset={Offset}, OrderBy={OrderBy}", 
-                context.SchemeId, facetFilters, parameters.Limit ?? 100, parameters.Offset ?? 0, orderByJson);
-
-            result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
-                context.SchemeId, 
-                facetFilters, 
-                parameters.Limit ?? 100, 
-                parameters.Offset ?? 0,
-                context.IsDistinct,
-                orderByJson ?? "null")
-                .FirstOrDefaultAsync();
-        }
+                var result = await _context.Database.SqlQueryRaw<SearchJsonResult>(sql, 
+            context.SchemeId, 
+            facetFilters, 
+            parameters.Limit ?? int.MaxValue,  // ✅ NULL → int.MaxValue (фактически без лимита)
+            parameters.Offset ?? 0,
+            orderByJson ?? "null",
+            context.MaxRecursionDepth ?? 10) // 🆕 max_recursion_depth (default 10)
+            .FirstOrDefaultAsync();
 
         if (result?.result != null)
         {
+            _logger?.LogDebug("🔍 SQL ОТВЕТ: Получен JSON длиной {Length} символов", result.result.Length);
+            _logger?.LogDebug("🔍 SQL JSON: {JsonContent}", result.result);
+            
             var jsonDoc = System.Text.Json.JsonDocument.Parse(result.result);
             if (jsonDoc.RootElement.TryGetProperty("objects", out var objectsElement))
             {
                 var objectsJson = objectsElement.GetRawText();
+                _logger?.LogDebug("🔍 OBJECTS JSON: {ObjectsJson}", objectsJson);
+                
                 var objects = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(objectsJson);
                 
-                _logger?.LogDebug("LINQ ToList Result: {Count} objects returned from database", objects?.Length ?? 0);
+                _logger?.LogDebug("📊 SQL РЕЗУЛЬТАТ: {Count} объектов получено из базы данных", objects?.Length ?? 0);
                 
                 // Материализация результатов из JSON объектов
-                return await MaterializeResultsFromJson<TProps>(objects ?? Array.Empty<System.Text.Json.JsonElement>(), context);
+                return await MaterializeResultsFromJson<TProps>(objects, context);
             }
+        }
+        else
+        {
+            _logger?.LogWarning("⚠️ SQL РЕЗУЛЬТАТ ПУСТОЙ: result?.result == null");
         }
 
         _logger?.LogDebug("LINQ ToList Result: No objects returned, returning empty list");
@@ -341,7 +184,17 @@ public class PostgresQueryProvider : IRedbQueryProvider
     private async Task<List<RedbObject<TProps>>> MaterializeResultsFromJson<TProps>(System.Text.Json.JsonElement[] objects, QueryContext<TProps> context) 
         where TProps : class, new()
     {
+        _logger?.LogDebug("🔍 МАТЕРИАЛИЗАЦИЯ: Получено {Count} JSON объектов для десериализации", objects?.Length ?? 0);
+        
         var materializedResults = new List<RedbObject<TProps>>();
+        var successCount = 0;
+        var errorCount = 0;
+
+        if (objects == null || objects.Length == 0)
+        {
+            _logger?.LogDebug("⚠️ МАТЕРИАЛИЗАЦИЯ: JSON массив пустой или null");
+            return materializedResults;
+        }
 
         foreach (var objElement in objects)
         {
@@ -368,13 +221,19 @@ public class PostgresQueryProvider : IRedbQueryProvider
                 // Десериализуем JSON данные объекта
                 var redbObject = _serializer.Deserialize<TProps>(objectJson);
                 materializedResults.Add(redbObject);
+                successCount++;
             }
             catch (Exception ex)
             {
-                // Логируем ошибку десериализации, но продолжаем обработку
-                Console.WriteLine($"Error deserializing object: {ex.Message}");
+                errorCount++;
+                // ✅ КРИТИЧНОЕ ИСПРАВЛЕНИЕ: ЛОГИРУЕМ ошибки десериализации!
+                _logger?.LogError(ex, "❌ ОШИБКА ДЕСЕРИАЛИЗАЦИИ объекта #{Index}: {ObjectJson}", errorCount, objElement.GetRawText());
+                // Продолжаем обработку других объектов
             }
         }
+
+        _logger?.LogDebug("📊 МАТЕРИАЛИЗАЦИЯ ЗАВЕРШЕНА: Успешно={Success}, Ошибок={Errors}, Итого объектов={Total}", 
+            successCount, errorCount, materializedResults.Count);
 
         return materializedResults;
     }
@@ -419,34 +278,5 @@ public class PostgresQueryProvider : IRedbQueryProvider
     private class PermissionCheckResult
     {
         public bool HasPermission { get; set; }
-    }
-
-    // ===== BATCH ФАБРИЧНЫЕ МЕТОДЫ =====
-
-    /// <summary>
-    /// Создать batch запрос для дочерних объектов массива родителей
-    /// </summary>
-    public IRedbQueryable<TProps> CreateChildrenBatchQuery<TProps>(long schemeId, long[] parentIds, long? userId = null, bool checkPermissions = false) 
-        where TProps : class, new()
-    {
-        var context = new QueryContext<TProps>(schemeId, userId, checkPermissions)
-        {
-            ParentIds = parentIds  // Единственное отличие от одиночного запроса!
-        };
-        return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
-    }
-      
-    /// <summary>
-    /// Создать batch запрос для потомков массива родителей с заданной глубиной
-    /// </summary>
-    public IRedbQueryable<TProps> CreateDescendantsBatchQuery<TProps>(long schemeId, long[] parentIds, int maxDepth, long? userId = null, bool checkPermissions = false)
-        where TProps : class, new()
-    {
-        var context = new QueryContext<TProps>(schemeId, userId, checkPermissions, maxDepth: maxDepth)
-        {
-            ParentIds = parentIds,  // Batch массив
-            MaxDepth = maxDepth     // Глубина рекурсии
-        };
-        return new RedbQueryable<TProps>(this, context, _filterParser, _orderingParser);
     }
 }

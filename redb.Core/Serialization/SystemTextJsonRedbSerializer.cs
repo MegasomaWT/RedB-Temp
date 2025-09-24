@@ -16,6 +16,8 @@ namespace redb.Core.Serialization
             ReadCommentHandling = JsonCommentHandling.Skip,
             AllowTrailingCommas = true,
             Converters = { 
+                new PostgresInfinityDateTimeConverter(), // ✅ ИСПРАВЛЕНИЕ: Поддержка PostgreSQL "-infinity"
+                new PostgresInfinityNullableDateTimeConverter(), // ✅ ИСПРАВЛЕНИЕ: Поддержка PostgreSQL "-infinity" для nullable DateTime
                 new JsonStringEnumConverter(), // Поддержка Enum как строк
                 new FlexibleTimeSpanConverter(), // Поддержка TimeSpan из строк
                 new FlexibleNullableTimeSpanConverter(), // Поддержка nullable TimeSpan
@@ -226,6 +228,130 @@ namespace redb.Core.Serialization
                 writer.WriteStringValue(value.Value.ToString(@"hh\:mm\:ss"));
             else
                 writer.WriteNullValue();
+        }
+    }
+
+    /// <summary>
+    /// ✅ ИСПРАВЛЕНИЕ ПРОБЛЕМЫ "-infinity": Конвертер DateTime для обработки PostgreSQL "-infinity"
+    /// Решает проблему: The JSON value could not be converted to System.DateTime
+    /// </summary>
+    public class PostgresInfinityDateTimeConverter : JsonConverter<DateTime>
+    {
+        public override DateTime Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var stringValue = reader.GetString();
+                
+                // ✅ ОБРАБОТКА PostgreSQL "-infinity"
+                if (stringValue == "-infinity")
+                {
+                    return DateTime.MinValue;
+                }
+                
+                // ✅ ОБРАБОТКА PostgreSQL "infinity"  
+                if (stringValue == "infinity")
+                {
+                    return DateTime.MaxValue;
+                }
+                
+                // Стандартная десериализация DateTime
+                if (DateTime.TryParse(stringValue, out var dateTime))
+                {
+                    return dateTime;
+                }
+            }
+            
+            // Если не строка, используем стандартную десериализацию
+            if (reader.TokenType == JsonTokenType.Null)
+            {
+                throw new JsonException("Cannot convert null to DateTime");
+            }
+            
+            // Пытаемся стандартную десериализацию
+            return JsonSerializer.Deserialize<DateTime>(ref reader, options);
+        }
+
+        public override void Write(Utf8JsonWriter writer, DateTime value, JsonSerializerOptions options)
+        {
+            // ✅ ОБРАТНАЯ КОНВЕРСИЯ: DateTime.MinValue → "-infinity" для PostgreSQL
+            if (value == DateTime.MinValue)
+            {
+                writer.WriteStringValue("-infinity");
+            }
+            else if (value == DateTime.MaxValue)
+            {
+                writer.WriteStringValue("infinity");
+            }
+            else
+            {
+                // Стандартная сериализация
+                writer.WriteStringValue(value.ToString("yyyy-MM-ddTHH:mm:ss.fffffffK"));
+            }
+        }
+    }
+
+    /// <summary>
+    /// ✅ ИСПРАВЛЕНИЕ ПРОБЛЕМЫ "-infinity": Конвертер nullable DateTime для обработки PostgreSQL "-infinity"
+    /// </summary>
+    public class PostgresInfinityNullableDateTimeConverter : JsonConverter<DateTime?>
+    {
+        public override DateTime? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
+        {
+            if (reader.TokenType == JsonTokenType.Null)
+            {
+                return null;
+            }
+            
+            if (reader.TokenType == JsonTokenType.String)
+            {
+                var stringValue = reader.GetString();
+                
+                // ✅ ОБРАБОТКА PostgreSQL "-infinity"
+                if (stringValue == "-infinity")
+                {
+                    return DateTime.MinValue;
+                }
+                
+                // ✅ ОБРАБОТКА PostgreSQL "infinity"  
+                if (stringValue == "infinity")
+                {
+                    return DateTime.MaxValue;
+                }
+                
+                // Стандартная десериализация DateTime
+                if (DateTime.TryParse(stringValue, out var dateTime))
+                {
+                    return dateTime;
+                }
+            }
+            
+            // Пытаемся стандартную десериализацию
+            return JsonSerializer.Deserialize<DateTime?>(ref reader, options);
+        }
+
+        public override void Write(Utf8JsonWriter writer, DateTime? value, JsonSerializerOptions options)
+        {
+            if (!value.HasValue)
+            {
+                writer.WriteNullValue();
+                return;
+            }
+            
+            // ✅ ОБРАТНАЯ КОНВЕРСИЯ: DateTime.MinValue → "-infinity" для PostgreSQL
+            if (value.Value == DateTime.MinValue)
+            {
+                writer.WriteStringValue("-infinity");
+            }
+            else if (value.Value == DateTime.MaxValue)
+            {
+                writer.WriteStringValue("infinity");
+            }
+            else
+            {
+                // Стандартная сериализация
+                writer.WriteStringValue(value.Value.ToString("yyyy-MM-ddTHH:mm:ss.fffffffK"));
+            }
         }
     }
 }

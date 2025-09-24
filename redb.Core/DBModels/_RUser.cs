@@ -23,6 +23,18 @@ public partial class _RUser
 
     public bool Enabled { get; set; }
 
+    public long? Key { get; set; }
+
+    public long? CodeInt { get; set; }
+
+    public string? CodeString { get; set; }
+
+    public Guid? CodeGuid { get; set; }
+
+    public string? Note { get; set; }
+
+    public Guid? Hash { get; set; }
+
     public virtual ICollection<_RObject> ObjectOwnerNavigations { get; set; } = new List<_RObject>();
 
     public virtual ICollection<_RObject> ObjectWhoChangeNavigations { get; set; } = new List<_RObject>();

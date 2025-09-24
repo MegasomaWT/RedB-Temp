@@ -48,6 +48,33 @@ namespace redb.Core.Models.Users
         /// </summary>
         public bool ExcludeSystemUsers { get; set; } = true;
         
+        // === НОВЫЕ ПОЛЯ ДЛЯ ФИЛЬТРАЦИИ ===
+        
+        /// <summary>
+        /// Фильтр по ключу пользователя (точное совпадение)
+        /// </summary>
+        public long? KeyValue { get; set; }
+        
+        /// <summary>
+        /// Фильтр по целочисленному коду (точное совпадение)
+        /// </summary>
+        public long? CodeIntValue { get; set; }
+        
+        /// <summary>
+        /// Поиск по строковому коду (частичное совпадение)
+        /// </summary>
+        public string? CodeStringPattern { get; set; }
+        
+        /// <summary>
+        /// Поиск по заметке (частичное совпадение)
+        /// </summary>
+        public string? NotePattern { get; set; }
+        
+        /// <summary>
+        /// Фильтр по GUID коду (точное совпадение, редко используется)
+        /// </summary>
+        public Guid? CodeGuidValue { get; set; }
+        
         /// <summary>
         /// Максимальное количество результатов (0 = без ограничений)
         /// </summary>
@@ -80,7 +107,15 @@ namespace redb.Core.Models.Users
         Email,
         DateRegister,
         DateDismiss,
-        Enabled
+        Enabled,
+        
+        // === НОВЫЕ ПОЛЯ ДЛЯ СОРТИРОВКИ ===
+        Key,
+        CodeInt,
+        CodeString,
+        Note
+        // Hash не добавляем - технический field
+        // CodeGuid редко используется для сортировки
     }
     
     /// <summary>

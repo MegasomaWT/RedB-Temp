@@ -1,0 +1,429 @@
+ЁЯФз ╨Э╨░╤Б╤В╤А╨░╨╕╨▓╨░╨╡╨╝ REDB ╤Б ╨╜╨╛╨▓╨╛╨╣ ╨┐╨░╤А╨░╨┤╨╕╨│╨╝╨╛╨╣ ╤Б╨╛╤Е╤А╨░╨╜╨╡╨╜╨╕╤П...
+тЬЕ ╨Э╨Ю╨Т╨Р╨п ╨Я╨Р╨а╨Р╨Ф╨Ш╨У╨Ь╨Р ╨Т╨Ъ╨Ы╨о╨з╨Х╨Э╨Р!
+тЬЕ EAV Strategy: ChangeTracking (╤А╨╡╨╗╤П╤Ж╨╕╨╛╨╜╨╜╤Л╨╡ ╨╝╨░╤Б╤Б╨╕╨▓╤Л, UUID ╤Е╨╡╤И╨╕, NULL ╤Б╨╡╨╝╨░╨╜╤В╨╕╨║╨░)
+тЬЕ ╨д╤Г╨╜╨║╤Ж╨╕╨╕: SaveArrayFieldAsync, SaveClassFieldAsync, SaveSimpleFieldAsync
+ЁЯОп === ╨Ч╨Р╨Я╨г╨б╨Ъ ╨Т╨л╨С╨а╨Р╨Э╨Э╨л╨е ╨н╨в╨Р╨Я╨Ю╨Т ===
+╨н╤В╨░╨┐╤Л ╨║ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╨╕╤О: [33]
+
+ЁЯФЧ === ╨н╨в╨Р╨Я 33: ЁЯМ│ ╨Ф╨а╨Х╨Т╨Ю╨Т╨Ш╨Ф╨Э╨л╨Х LINQ-╨Ч╨Р╨Я╨а╨Ю╨б╨л: ╨Ъ╨Ю╨а╨Я╨Ю╨а╨Р╨в╨Ш╨Т╨Э╨Р╨п ╨Ш╨Х╨а╨Р╨а╨е╨Ш╨п ===
+╨Ф╨╡╨╝╨╛╨╜╤Б╤В╤А╨░╤Ж╨╕╤П ╨╝╨╛╤Й╨╕ ╨┤╤А╨╡╨▓╨╛╨▓╨╕╨┤╨╜╤Л╤Е ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓ ╨╜╨░ ╤А╨╡╨░╨╗╨╕╤Б╤В╨╕╤З╨╜╤Л╤Е ╨▒╨╕╨╖╨╜╨╡╤Б-╤Б╤Ж╨╡╨╜╨░╤А╨╕╤П╤Е
+ЁЯМ│ === ╨Ф╨Х╨Ь╨Ю╨Э╨б╨в╨а╨Р╨ж╨Ш╨п ╨Ф╨а╨Х╨Т╨Ю╨Т╨Ш╨Ф╨Э╨л╨е LINQ-╨Ч╨Р╨Я╨а╨Ю╨б╨Ю╨Т ===
+ЁЯПв ╨б╨╛╨╖╨┤╨░╨╡╨╝ ╨║╨╛╤А╨┐╨╛╤А╨░╤В╨╕╨▓╨╜╤Г╤О ╨╕╨╡╤А╨░╤А╤Е╨╕╤О ╨╕ ╤В╨╡╤Б╤В╨╕╤А╤Г╨╡╨╝ ╤А╨╡╨░╨╗╤М╨╜╤Л╨╡ ╨▒╨╕╨╖╨╜╨╡╤Б-╤Б╤Ж╨╡╨╜╨░╤А╨╕╨╕
+ЁЯПЧя╕П === ╨б╨Ю╨Ч╨Ф╨Р╨Э╨Ш╨Х ╨Ъ╨Ю╨а╨Я╨Ю╨а╨Р╨в╨Ш╨Т╨Э╨Ю╨Щ ╨б╨в╨а╨г╨Ъ╨в╨г╨а╨л ===
+ЁЯУЛ ╨б╤Е╨╡╨╝╤Л ╤Б╨╛╨╖╨┤╨░╨╜╤Л: ╨Я╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П (Scheme 1030562: CategoryTestProps), ╨б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ (Scheme 1030344: ProductTestProps)
+  ЁЯПв TechCorp (ID: 1233189)
+  ЁЯПв Moscow Office (ID: 1233193)
+  ЁЯПв SPB Office (ID: 1233197)
+  ЁЯПв NNY Office (ID: 1233201)
+  ЁЯПв IT Department MSK (ID: 1233205)
+  ЁЯПв Sales Department MSK (ID: 1233209)
+  ЁЯПв HR Department MSK (ID: 1233213)
+  ЁЯПв IT Department SPB (ID: 1233217)
+  ЁЯПв Sales Department SPB (ID: 1233221)
+  ЁЯПв Development Team Alpha (ID: 1233225)
+  ЁЯПв Development Team Beta (ID: 1233229)
+  ЁЯПв QA Team (ID: 1233233)
+  ЁЯПв DevOps Team (ID: 1233237)
+  ЁЯПв Enterprise Sales (ID: 1233241)
+  ЁЯПв SMB Sales (ID: 1233245)
+ЁЯСе ╨б╨╛╨╖╨┤╨░╨╡╨╝ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓:
+  ЁЯСд ╨Ш╨▓╨░╨╜╨╛╨▓ ╨Ш.╨Ш. - CEO (300┬а000,00 тВ╜)
+  ЁЯСд ╨Я╨╡╤В╤А╨╛╨▓ ╨Я.╨Я. - CTO (250┬а000,00 тВ╜)
+  ЁЯСд ╨б╨╕╨┤╨╛╤А╨╛╨▓ ╨б.╨б. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨╝╨╛╤Б╨║╨╛╨▓╤Б╨║╨╛╨│╨╛ ╨╛╤Д╨╕╤Б╨░ (200┬а000,00 тВ╜)
+  ЁЯСд ╨Ъ╨╛╨╖╨╗╨╛╨▓ ╨Ъ.╨Ъ. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨б╨Я╨С ╨╛╤Д╨╕╤Б╨░ (180┬а000,00 тВ╜)
+  ЁЯСд ╨Я╤А╨╛╨│╤А╨░╨╝╨╝╨╕╤Б╤В ╨Р.╨Р. - Senior Developer (150┬а000,00 тВ╜)
+  ЁЯСд ╨а╨░╨╖╤А╨░╨▒╨╛╤В╤З╨╕╨║ ╨С.╨С. - Middle Developer (120┬а000,00 тВ╜)
+  ЁЯСд ╨Ф╨╢╤Г╨╜╨╕╨╛╤А ╨Т.╨Т. - Junior Developer (80┬а000,00 тВ╜)
+  ЁЯСд ╨Ы╨╕╨┤╨╡╤А ╨У.╨У. - Team Lead (180┬а000,00 тВ╜)
+  ЁЯСд ╨Ъ╨╛╨┤╨╡╤А ╨Ф.╨Ф. - Senior Developer (140┬а000,00 тВ╜)
+  ЁЯСд ╨в╨╡╤Б╤В╨╡╤А ╨Х.╨Х. - QA Engineer (100┬а000,00 тВ╜)
+  ЁЯСд ╨Р╨▓╤В╨╛╨╝╨░╤В╨╕╨╖╨░╤В╨╛╤А ╨Ц.╨Ц. - QA Automation (130┬а000,00 тВ╜)
+  ЁЯСд ╨Р╨┤╨╝╨╕╨╜ ╨Ч.╨Ч. - DevOps Engineer (160┬а000,00 тВ╜)
+  ЁЯСд ╨Я╤А╨╛╨┤╨░╨▓╨╡╤Ж ╨Ш.╨Ш. - Sales Manager (90┬а000,00 тВ╜)
+  ЁЯСд ╨Ь╨╡╨╜╨╡╨┤╨╢╨╡╤А ╨Ъ.╨Ъ. - Account Manager (110┬а000,00 тВ╜)
+  ЁЯСд ╨Р╨│╨╡╨╜╤В ╨Ы.╨Ы. - Sales Rep (70┬а000,00 тВ╜)
+  ЁЯСд ╨н╨╣╤З╨░╤А ╨Ь.╨Ь. - HR Manager (95┬а000,00 тВ╜)
+  ЁЯСд ╨а╨╡╨║╤А╤Г╤В╨╡╤А ╨Э.╨Э. - Recruiter (75┬а000,00 тВ╜)
+  ЁЯСд ╨б╨Я╨С ╨а╨░╨╖╤А╨░╨▒ ╨Ю.╨Ю. - Full Stack Developer (125┬а000,00 тВ╜)
+  ЁЯСд ╨б╨Я╨С ╨в╨╡╤Б╤В╨╡╤А ╨Я.╨Я. - QA Engineer (95┬а000,00 тВ╜)
+  ЁЯСд ╨б╨Я╨С ╨Я╤А╨╛╨┤╨░╨╢╨╕ ╨а.╨а. - Sales Manager (85┬а000,00 тВ╜)
+тЬЕ ╨Ъ╨╛╤А╨┐╨╛╤А╨░╤В╨╕╨▓╨╜╨░╤П ╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╤Б╨╛╨╖╨┤╨░╨╜╨░:
+   ЁЯУК ╨Я╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╨╣: 15
+   ЁЯСе ╨б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓: 20
+   ЁЯПЧя╕П ╨г╤А╨╛╨▓╨╜╨╡╨╣ ╨╕╨╡╤А╨░╤А╤Е╨╕╨╕: 4
+ЁЯПЧя╕П ╨б╤В╤А╤Г╨║╤В╤Г╤А╨░ ╨╛╤А╨│╨░╨╜╨╕╨╖╨░╤Ж╨╕╨╕:
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"$isRoot":true}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+ЁЯПв ╨в╨╡╤Е╨Ъ╨╛╤А╨┐ - ╨У╨╛╨╗╨╛╨▓╨╜╨░╤П ╨║╨╛╨╝╨┐╨░╨╜╨╕╤П (20 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓)
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"$childrenOf":1233189}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+ЁЯзк === ╨Ф╨Х╨Ь╨Ю╨Э╨б╨в╨а╨Р╨ж╨Ш╨п ╨С╨Ш╨Ч╨Э╨Х╨б-╨б╨ж╨Х╨Э╨Р╨а╨Ш╨Х╨Т ===
+ЁЯТ╝ ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 1: '╨Э╨░╨╣╤В╨╕ ╨▓╤Б╨╡ IT-╨┐╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П ╨▓╨╛ ╨▓╤Б╨╡╤Е ╨╛╤Д╨╕╤Б╨░╤Е'
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: IT (String)
+   ЁЯУд Converted value: IT (String)
+   ЁЯОп Operator: Contains
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"Name":{"$contains":"IT"}}
+   ЁЯУК OrderByJson: [{"field":"Name","direction":"ASC"}]
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+тЬЕ IT ╨┐╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П (2):
+   тАв IT Department MSK: IT-╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В ╨Ь╨╛╤Б╨║╨▓╨░
+   тАв IT Department SPB: IT-╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В ╨б╨Я╨С
+ЁЯПЩя╕П ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 2: '╨Т╤Б╨╡ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ ╨╕ ╨┐╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П ╨╝╨╛╤Б╨║╨╛╨▓╤Б╨║╨╛╨│╨╛ ╨╛╤Д╨╕╤Б╨░'
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030344 (Int64)
+   ЁЯУК RootObjectId: 1233193 (Int64)
+   ЁЯУК FilterJson: {"IsActive":{"$eq":true}}
+   ЁЯУК OrderByJson: [{"field":"Price","direction":"DESC"}]
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 10
+   ЁЯУК MaxRecursionDepth: 10
+тЬЕ ╨б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ ╨╝╨╛╤Б╨║╨╛╨▓╤Б╨║╨╛╨│╨╛ ╨╛╤Д╨╕╤Б╨░ (13):
+   тЬЕ ╨б╨╕╨┤╨╛╤А╨╛╨▓ ╨б.╨б. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨╝╨╛╤Б╨║╨╛╨▓╤Б╨║╨╛╨│╨╛ ╨╛╤Д╨╕╤Б╨░ (200┬а000,00 тВ╜)
+   тЬЕ ╨Ы╨╕╨┤╨╡╤А ╨У.╨У. - Team Lead (180┬а000,00 тВ╜)
+   тЬЕ ╨Р╨┤╨╝╨╕╨╜ ╨Ч.╨Ч. - DevOps Engineer (160┬а000,00 тВ╜)
+   тЬЕ ╨Я╤А╨╛╨│╤А╨░╨╝╨╝╨╕╤Б╤В ╨Р.╨Р. - Senior Developer (150┬а000,00 тВ╜)
+   тЬЕ ╨Ъ╨╛╨┤╨╡╤А ╨Ф.╨Ф. - Senior Developer (140┬а000,00 тВ╜)
+   тЬЕ ╨Р╨▓╤В╨╛╨╝╨░╤В╨╕╨╖╨░╤В╨╛╤А ╨Ц.╨Ц. - QA Automation (130┬а000,00 тВ╜)
+   тЬЕ ╨а╨░╨╖╤А╨░╨▒╨╛╤В╤З╨╕╨║ ╨С.╨С. - Middle Developer (120┬а000,00 тВ╜)
+   ... ╨╕ ╨╡╤Й╨╡ 6 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+ЁЯТ╗ ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 3: '╨Э╨░╨╣╤В╨╕ ╨▓╤Б╨╡ ╨║╨╛╨╝╨░╨╜╨┤╤Л ╤А╨░╨╖╤А╨░╨▒╨╛╤В╨║╨╕ (Development Team)'
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: Development Team (String)
+   ЁЯУд Converted value: Development Team (String)
+   ЁЯОп Operator: Contains
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"Name":{"$contains":"Development Team"}}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+тЬЕ ╨Ъ╨╛╨╝╨░╨╜╨┤╤Л ╤А╨░╨╖╤А╨░╨▒╨╛╤В╨║╨╕ (0):
+ЁЯОп ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 4: '╨Т╤Л╤Б╨╛╨║╨╛╨╛╨┐╨╗╨░╤З╨╕╨▓╨░╨╡╨╝╤Л╨╡ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ (╨╖╨░╤А╨┐╨╗╨░╤В╨░ > 120╨║)'
+ЁЯФН TYPE CONVERSION: Field 'Price' (Type: Double)
+   ЁЯУе Original value: 120000 (Double)
+   ЁЯУд Converted value: 120000 (Double)
+   ЁЯОп Operator: GreaterThan
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030344 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"Price":{"$gt":120000},"IsActive":{"$eq":true}}
+   ЁЯУК OrderByJson: [{"field":"Price","direction":"DESC"}]
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+тЬЕ ╨Т╤Л╤Б╨╛╨║╨╛╨╛╨┐╨╗╨░╤З╨╕╨▓╨░╨╡╨╝╤Л╨╡ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ (10):
+   тЬЕ ╨Ш╨▓╨░╨╜╨╛╨▓ ╨Ш.╨Ш. - CEO (300┬а000,00 тВ╜)
+   тЬЕ ╨Я╨╡╤В╤А╨╛╨▓ ╨Я.╨Я. - CTO (250┬а000,00 тВ╜)
+   тЬЕ ╨б╨╕╨┤╨╛╤А╨╛╨▓ ╨б.╨б. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨╝╨╛╤Б╨║╨╛╨▓╤Б╨║╨╛╨│╨╛ ╨╛╤Д╨╕╤Б╨░ (200┬а000,00 тВ╜)
+   тЬЕ ╨Ъ╨╛╨╖╨╗╨╛╨▓ ╨Ъ.╨Ъ. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨б╨Я╨С ╨╛╤Д╨╕╤Б╨░ (180┬а000,00 тВ╜)
+   тЬЕ ╨Ы╨╕╨┤╨╡╤А ╨У.╨У. - Team Lead (180┬а000,00 тВ╜)
+   тЬЕ ╨Р╨┤╨╝╨╕╨╜ ╨Ч.╨Ч. - DevOps Engineer (160┬а000,00 тВ╜)
+   тЬЕ ╨Я╤А╨╛╨│╤А╨░╨╝╨╝╨╕╤Б╤В ╨Р.╨Р. - Senior Developer (150┬а000,00 тВ╜)
+   ... ╨╕ ╨╡╤Й╨╡ 3 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+ЁЯСС ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 5: '╨Я╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П ╨┤╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В/╨║╨╛╨╝╨░╨╜╨┤╨░ ╤В╨╕╨┐╨░'
+ЁЯФН TYPE CONVERSION: Field 'Description' (Type: String)
+   ЁЯУе Original value: ╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В (String)
+   ЁЯУд Converted value: ╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В (String)
+   ЁЯОп Operator: Contains
+ЁЯФН TYPE CONVERSION: Field 'Description' (Type: String)
+   ЁЯУе Original value: ╨Ъ╨╛╨╝╨░╨╜╨┤╨░ (String)
+   ЁЯУд Converted value: ╨Ъ╨╛╨╝╨░╨╜╨┤╨░ (String)
+   ЁЯОп Operator: Contains
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"$or":[{"Description":{"$contains":"\u0414\u0435\u043F\u0430\u0440\u0442\u0430\u043C\u0435\u043D\u0442"}},{"Description":{"$contains":"\u041A\u043E\u043C\u0430\u043D\u0434\u0430"}}],"IsActive":{"$eq":true}}
+   ЁЯУК OrderByJson: [{"field":"Name","direction":"ASC"}]
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+тЬЕ ╨Я╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П ╤Б ╨║╨╛╨╝╨░╨╜╨┤╨░╨╝╨╕ (7):
+   тАв HR Department MSK: HR-╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В ╨Ь╨╛╤Б╨║╨▓╨░
+   тАв IT Department MSK: IT-╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В ╨Ь╨╛╤Б╨║╨▓╨░
+   тАв IT Department SPB: IT-╨Ф╨╡╨┐╨░╤А╤В╨░╨╝╨╡╨╜╤В ╨б╨Я╨С
+   тАв DevOps Team: ╨Ъ╨╛╨╝╨░╨╜╨┤╨░ DevOps
+   тАв Development Team Alpha: ╨Ъ╨╛╨╝╨░╨╜╨┤╨░ ╤А╨░╨╖╤А╨░╨▒╨╛╤В╨║╨╕ Alpha
+   ... ╨╕ ╨╡╤Й╨╡ 2
+ЁЯУК ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 6: '╨а╨░╤Б╨┐╤А╨╡╨┤╨╡╨╗╨╡╨╜╨╕╨╡ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓ ╨┐╨╛ ╤Г╤А╨╛╨▓╨╜╤П╨╝'
+   ╨г╤А╨╛╨▓╨╡╨╜╤М 0: 0 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+   ╨г╤А╨╛╨▓╨╡╨╜╤М 1: 0 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+   ╨г╤А╨╛╨▓╨╡╨╜╤М 2: 0 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+   ╨г╤А╨╛╨▓╨╡╨╜╤М 3: 0 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+ЁЯТ░ ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 7: '╨Т╤Л╤Б╨╛╨║╨╛╨╛╨┐╨╗╨░╤З╨╕╨▓╨░╨╡╨╝╤Л╨╡ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ (╤Г╤А╨╛╨▓╨╡╨╜╤М > 2, ╨╖╨░╤А╨┐╨╗╨░╤В╨░ > 100╨║)'
+ЁЯФН TYPE CONVERSION: Field 'Price' (Type: Double)
+   ЁЯУе Original value: 100000 (Double)
+   ЁЯУд Converted value: 100000 (Double)
+   ЁЯОп Operator: GreaterThan
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+тЬЕ ╨Т╤Л╤Б╨╛╨║╨╛╨╛╨┐╨╗╨░╤З╨╕╨▓╨░╨╡╨╝╤Л╨╡ (╨│╨╗╤Г╨▒╨╛╨║╨╕╨╡ ╤Г╤А╨╛╨▓╨╜╨╕) (10):
+   тЬЕ ╨Ш╨▓╨░╨╜╨╛╨▓ ╨Ш.╨Ш. - CEO (300┬а000,00 тВ╜)
+   тЬЕ ╨Я╨╡╤В╤А╨╛╨▓ ╨Я.╨Я. - CTO (250┬а000,00 тВ╜)
+   тЬЕ ╨б╨╕╨┤╨╛╤А╨╛╨▓ ╨б.╨б. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨╝╨╛╤Б╨║╨╛╨▓╤Б╨║╨╛╨│╨╛ ╨╛╤Д╨╕╤Б╨░ (200┬а000,00 тВ╜)
+   тЬЕ ╨Ъ╨╛╨╖╨╗╨╛╨▓ ╨Ъ.╨Ъ. - ╨Ф╨╕╤А╨╡╨║╤В╨╛╤А ╨б╨Я╨С ╨╛╤Д╨╕╤Б╨░ (180┬а000,00 тВ╜)
+   тЬЕ ╨Ы╨╕╨┤╨╡╤А ╨У.╨У. - Team Lead (180┬а000,00 тВ╜)
+   тЬЕ ╨Р╨┤╨╝╨╕╨╜ ╨Ч.╨Ч. - DevOps Engineer (160┬а000,00 тВ╜)
+   тЬЕ ╨Я╤А╨╛╨│╤А╨░╨╝╨╝╨╕╤Б╤В ╨Р.╨Р. - Senior Developer (150┬а000,00 тВ╜)
+   ... ╨╕ ╨╡╤Й╨╡ 3 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+ЁЯМ▒ ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 8: '╨Ъ╨╛╤А╨╜╨╡╨▓╤Л╨╡ ╨┐╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╤П (WhereRoots)'
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"$isRoot":true}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+   ЁЯУЛ ╨в╨╡╤Е╨Ъ╨╛╤А╨┐ - ╨У╨╛╨╗╨╛╨▓╨╜╨░╤П ╨║╨╛╨╝╨┐╨░╨╜╨╕╤П: 20 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓ ╨▓ ╨╕╨╡╤А╨░╤А╤Е╨╕╨╕
+ЁЯНГ ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 9: '╨Ъ╨╛╨╜╨╡╤З╨╜╤Л╨╡ ╨║╨╛╨╝╨░╨╜╨┤╤Л (WhereLeaves)'
+ЁЯФН TYPE CONVERSION: Field 'Description' (Type: String)
+   ЁЯУе Original value: ╨Ъ╨╛╨╝╨░╨╜╨┤╨░ (String)
+   ЁЯУд Converted value: ╨Ъ╨╛╨╝╨░╨╜╨┤╨░ (String)
+   ЁЯОп Operator: Contains
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"Description":{"$contains":"\u041A\u043E\u043C\u0430\u043D\u0434\u0430"},"$isLeaf":true}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+тЬЕ ╨Ъ╨╛╨╜╨╡╤З╨╜╤Л╨╡ ╨║╨╛╨╝╨░╨╜╨┤╤Л (0):
+ЁЯМ│ ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 10: '╨Я╨╛╨╗╨╜╨░╤П ╨╛╤А╨│╨░╨╜╨╕╨╖╨░╤Ж╨╕╨╛╨╜╨╜╨░╤П ╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░ (ToTreeListAsync)'
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"$isRoot":true}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 50
+   ЁЯУК MaxRecursionDepth: 10
+ЁЯУК ╨Ю╤А╨│╨░╨╜╨╕╨╖╨░╤Ж╨╕╨╛╨╜╨╜╨░╤П ╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░:
+ЁЯПв ╨в╨╡╤Е╨Ъ╨╛╤А╨┐ - ╨У╨╛╨╗╨╛╨▓╨╜╨░╤П ╨║╨╛╨╝╨┐╨░╨╜╨╕╤П
+
+ЁЯЪА ╨б╤Ж╨╡╨╜╨░╤А╨╕╨╣ 11: 'TreeQueryAsync ╤Б ╨Ь╨Э╨Ю╨Ц╨Х╨б╨в╨Т╨Х╨Э╨Э╨л╨Ь╨Ш ╤А╨╛╨┤╨╕╤В╨╡╨╗╤П╨╝╨╕ - ╨╕╤Б╨┐╤А╨░╨▓╨╗╨╡╨╜╨╕╨╡ ╨┐╤А╨╛╨▒╨╡╨╝╤Л тДЦ6'
+ЁЯПв ╨в╨╡╤Б╤В╨╕╤А╤Г╨╡╨╝ ╨┐╨╛╨╕╤Б╨║ ╨▓╨╛ ╨╝╨╜╨╛╨╢╨╡╤Б╤В╨▓╨╡╨╜╨╜╤Л╤Е ╨╛╤Д╨╕╤Б╨░╤Е: Moscow (1233193) + SPB (1233197)
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030344 (Int64)
+   ЁЯУК RootObjectId:  ()
+   ЁЯУК FilterJson: {"IsActive":{"$eq":true}}
+   ЁЯУК OrderByJson: [{"field":"Price","direction":"ASC"}]
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 3
+   ЁЯУК MaxRecursionDepth: 10
+ЁЯУК ╨Э╨░╨╣╨┤╨╡╨╜╨╛ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓ ╨▓╨╛ ╨Т╨б╨Х╨е ╨╛╤Д╨╕╤Б╨░╤Е: 17
+  ЁЯПв ╨Ю╤Д╨╕╤Б ID 1233245: 1 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+    ЁЯСд ╨Р╨│╨╡╨╜╤В ╨Ы.╨Ы.: ╨Ч╨░╤А╨┐╨╗╨░╤В╨░ $70000
+  ЁЯПв ╨Ю╤Д╨╕╤Б ID 1233225: 3 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+    ЁЯСд ╨Ф╨╢╤Г╨╜╨╕╨╛╤А ╨Т.╨Т.: ╨Ч╨░╤А╨┐╨╗╨░╤В╨░ $80000
+    ЁЯСд ╨а╨░╨╖╤А╨░╨▒╨╛╤В╤З╨╕╨║ ╨С.╨С.: ╨Ч╨░╤А╨┐╨╗╨░╤В╨░ $120000
+  ЁЯПв ╨Ю╤Д╨╕╤Б ID 1233241: 2 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓
+    ЁЯСд ╨Я╤А╨╛╨┤╨░╨▓╨╡╤Ж ╨Ш.╨Ш.: ╨Ч╨░╤А╨┐╨╗╨░╤В╨░ $90000
+    ЁЯСд ╨Ь╨╡╨╜╨╡╨┤╨╢╨╡╤А ╨Ъ.╨Ъ.: ╨Ч╨░╤А╨┐╨╗╨░╤В╨░ $110000
+тЬЕ TreeQueryAsync ╤Б ╨Ь╨Э╨Ю╨Ц╨Х╨б╨в╨Т╨Х╨Э╨Э╨л╨Ь╨Ш ╤А╨╛╨┤╨╕╤В╨╡╨╗╤П╨╝╨╕ ╨а╨Р╨С╨Ю╨в╨Р╨Х╨в!
+тП▒я╕П ╨Т╤Б╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╤Л ╨╖╨░: 315 ╨╝╤Б
+тЪб === ╨Р╨Э╨Р╨Ы╨Ш╨Ч ╨Я╨а╨Ю╨Ш╨Ч╨Т╨Ю╨Ф╨Ш╨в╨Х╨Ы╨м╨Э╨Ю╨б╨в╨Ш ===
+ЁЯФ╣ ╨в╨╡╤Б╤В 1: ╨Я╨╛╨╕╤Б╨║ IT-╨┐╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╨╣
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: IT (String)
+   ЁЯУд Converted value: IT (String)
+   ЁЯОп Operator: Contains
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: IT (String)
+   ЁЯУд Converted value: IT (String)
+   ЁЯОп Operator: Contains
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: IT (String)
+   ЁЯУд Converted value: IT (String)
+   ЁЯОп Operator: Contains
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: IT (String)
+   ЁЯУд Converted value: IT (String)
+   ЁЯОп Operator: Contains
+ЁЯФН TYPE CONVERSION: Field 'Name' (Type: String)
+   ЁЯУе Original value: IT (String)
+   ЁЯУд Converted value: IT (String)
+   ЁЯОп Operator: Contains
+   ╨б╤А╨╡╨┤╨╜╨╡╨╡ ╨▓╤А╨╡╨╝╤П: 11,6 ╨╝╤Б (╨╜╨░╨╣╨┤╨╡╨╜╨╛ ╨╖╨░╨┐╨╕╤Б╨╡╨╣ ╨▓ ╨┐╨╛╤Б╨╗╨╡╨┤╨╜╨╡╨╝ ╨╖╨░╨┐╤А╨╛╤Б╨╡)
+ЁЯФ╣ ╨в╨╡╤Б╤В 2: ╨Р╨║╤В╨╕╨▓╨╜╤Л╨╡ ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╕ ╤Б ╨╛╨┐╤Л╤В╨╛╨╝
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'Stock' (Type: Int32)
+   ЁЯУе Original value: 30 (Int32)
+   ЁЯУд Converted value: 30 (Int32)
+   ЁЯОп Operator: GreaterThan
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'Stock' (Type: Int32)
+   ЁЯУе Original value: 30 (Int32)
+   ЁЯУд Converted value: 30 (Int32)
+   ЁЯОп Operator: GreaterThan
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'Stock' (Type: Int32)
+   ЁЯУе Original value: 30 (Int32)
+   ЁЯУд Converted value: 30 (Int32)
+   ЁЯОп Operator: GreaterThan
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'Stock' (Type: Int32)
+   ЁЯУе Original value: 30 (Int32)
+   ЁЯУд Converted value: 30 (Int32)
+   ЁЯОп Operator: GreaterThan
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'Stock' (Type: Int32)
+   ЁЯУе Original value: 30 (Int32)
+   ЁЯУд Converted value: 30 (Int32)
+   ЁЯОп Operator: GreaterThan
+   ╨б╤А╨╡╨┤╨╜╨╡╨╡ ╨▓╤А╨╡╨╝╤П: 13,6 ╨╝╤Б
+ЁЯФ╣ ╨в╨╡╤Б╤В 3: ╨Ю╨│╤А╨░╨╜╨╕╤З╨╡╨╜╨╜╤Л╨╣ ╨┐╨╛╨╕╤Б╨║ ╨▓ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨╡
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+   ╨б╤А╨╡╨┤╨╜╨╡╨╡ ╨▓╤А╨╡╨╝╤П: 13,0 ╨╝╤Б
+ЁЯУИ ╨Т╤Л╨▓╨╛╨┤╤Л:
+   тАв ╨Ф╤А╨╡╨▓╨╛╨▓╨╕╨┤╨╜╤Л╨╡ ╨╖╨░╨┐╤А╨╛╤Б╤Л ╨╕╤Б╨┐╨╛╨╗╤М╨╖╤Г╤О╤В ╨╛╨┐╤В╨╕╨╝╨╕╨╖╨╕╤А╨╛╨▓╨░╨╜╨╜╤Л╨╡ SQL ╤Д╤Г╨╜╨║╤Ж╨╕╨╕
+   тАв ╨Ю╨│╤А╨░╨╜╨╕╤З╨╡╨╜╨╕╨╡ ╨┐╨╛╨┤╨┤╨╡╤А╨╡╨▓╨░ ╨╖╨╜╨░╤З╨╕╤В╨╡╨╗╤М╨╜╨╛ ╤Г╤Б╨║╨╛╤А╤П╨╡╤В ╨┐╨╛╨╕╤Б╨║
+   тАв ╨Ш╨╡╤А╨░╤А╤Е╨╕╤З╨╡╤Б╨║╨╕╨╡ ╨╛╨┐╨╡╤А╨░╤В╨╛╤А╤Л ╤А╨░╨▒╨╛╤В╨░╤О╤В ╤Н╤Д╤Д╨╡╨║╤В╨╕╨▓╨╜╨╛ ╨╜╨░ ╨▒╨╛╨╗╤М╤И╨╕╤Е ╤Б╤В╤А╤Г╨║╤В╤Г╤А╨░╤Е
+
+ЁЯМ│ === ╨в╨Х╨б╨в ╨Я╨а╨Ю╨С╨Ы╨Х╨Ь╨л тДЦ4 ╨Ф╨Ы╨п TREE QUERY ===
+ЁЯУЛ ╨Я╤А╨╛╨▓╨╡╤А╤П╨╡╨╝: TreeQuery.OrderBy() тЖТ ╨╝╨╛╨╢╨╡╤В ╤В╨╡╤А╤П╤В╤М Tree ╨║╨╛╨╜╤В╨╡╨║╤Б╤В тЖТ ╨▒╨╛╨╗╤М╤И╨╡ ╨╛╨▒╤К╨╡╨║╤В╨╛╨▓
+ЁЯФН ╨и╨Р╨У 1: TreeQuery ╨╛╤В ╨║╨╛╤А╨╜╤П ID=1233189
+ЁЯУК TreeQuery ╤В╨╕╨┐: PostgresTreeQueryable`1
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId: 1233189 (Int64)
+   ЁЯУК FilterJson: {"IsActive":{"$eq":true}}
+   ЁЯУК OrderByJson: null
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 3
+   ЁЯУК MaxRecursionDepth: 10
+ЁЯУК ╨в╨Х╨б╨в 1 (Tree ╨┤╨╛ OrderBy): 14 ╨╛╨▒╤К╨╡╨║╤В╨╛╨▓
+
+ЁЯЪи ╨и╨Р╨У 3: ╨Я╤А╨╕╨╝╨╡╨╜╤П╨╡╨╝ OrderBy - ╨Я╨а╨Ю╨Т╨Х╨а╨п╨Х╨Ь ╨в╨Х╨а╨п╨Х╨в╨б╨п ╨Ы╨Ш Tree ╨║╨╛╨╜╤В╨╡╨║╤Б╤В!
+ЁЯУЭ ╨Я╨╛ ╨┐╤А╨╕╨╝╨╡╤А╤Г: treeQuery = treeQuery.OrderBy(c => c.Name);
+ЁЯУК ╨Я╨╛╤Б╨╗╨╡ OrderBy ╤В╨╕╨┐: PostgresTreeQueryable`1
+ЁЯФН TYPE CONVERSION: Field 'IsActive' (Type: Boolean)
+   ЁЯУе Original value: True (Boolean)
+   ЁЯУд Converted value: True (Boolean)
+   ЁЯОп Operator: Equal
+   ЁЯУЛ Generated filter: {IsActive: {"$eq": True}}
+ЁЯФН SQL PARAMETERS DEBUG:
+   ЁЯУК SchemeId: 1030562 (Int64)
+   ЁЯУК RootObjectId: 1233189 (Int64)
+   ЁЯУК FilterJson: {"IsActive":{"$eq":true}}
+   ЁЯУК OrderByJson: [{"field":"Name","direction":"ASC"}]
+   ЁЯУК Limit: 100
+   ЁЯУК Offset: 0
+   ЁЯУК MaxDepth: 3
+   ЁЯУК MaxRecursionDepth: 10
+ЁЯУК ╨в╨Х╨б╨в 2 (╨┐╨╛╤Б╨╗╨╡ OrderBy): 14 ╨╛╨▒╤К╨╡╨║╤В╨╛╨▓
+
+ЁЯФе === ╨Р╨Э╨Р╨Ы╨Ш╨Ч ╨Я╨а╨Ю╨С╨Ы╨Х╨Ь╨л тДЦ4 ╨Ф╨Ы╨п TREE QUERY ===
+тЬЕ Tree ╨║╨╛╨╜╤В╨╡╨║╤Б╤В ╤Б╨╛╤Е╤А╨░╨╜╨╕╨╗╤Б╤П: 14 тЖТ 14 ╨╛╨▒╤К╨╡╨║╤В╨╛╨▓
+   тЬЕ OrderBy ╤А╨░╨▒╨╛╤В╨░╨╡╤В ╨║╨╛╤А╤А╨╡╨║╤В╨╜╨╛ ╨┤╨╗╤П Tree ╨╖╨░╨┐╤А╨╛╤Б╨╛╨▓
+ЁЯЧСя╕П === ╨Ю╨з╨Ш╨б╨в╨Ъ╨Р ╨Ф╨Р╨Э╨Э╨л╨е ===
+тЬЕ ╨г╨┤╨░╨╗╨╡╨╜╨╛: 20 ╤Б╨╛╤В╤А╤Г╨┤╨╜╨╕╨║╨╛╨▓, 15 ╨┐╨╛╨┤╤А╨░╨╖╨┤╨╡╨╗╨╡╨╜╨╕╨╣
+тЬЕ === ╨Ф╨Х╨Ь╨Ю╨Э╨б╨в╨а╨Р╨ж╨Ш╨п ╨Ч╨Р╨Т╨Х╨а╨и╨Х╨Э╨Р ╨г╨б╨Я╨Х╨и╨Э╨Ю ===
+тЬЕ === ╨н╨в╨Р╨Я 33 ╨Ч╨Р╨Т╨Х╨а╨и╨Х╨Э ╨г╨б╨Я╨Х╨и╨Э╨Ю ===
+
+ЁЯУК === ╨Ш╨в╨Ю╨У╨Ш ╨Т╨л╨Я╨Ю╨Ы╨Э╨Х╨Э╨Ш╨п ===
+тЬЕ ╨г╤Б╨┐╨╡╤И╨╜╨╛ ╨▓╤Л╨┐╨╛╨╗╨╜╨╡╨╜╨╛: 1/1 ╤Н╤В╨░╨┐╨╛╨▓

@@ -41,36 +41,6 @@ public record InExpression(
 ) : FilterExpression;
 
 /// <summary>
-/// Выражение для методов массивов (Contains, Any, Count)
-/// </summary>
-public record ArrayMethodExpression(
-    PropertyInfo ArrayProperty,
-    ArrayMethod Method,
-    object? Argument = null
-) : FilterExpression;
-
-/// <summary>
-/// Методы для работы с массивами
-/// </summary>
-public enum ArrayMethod
-{
-    /// <summary>
-    /// Проверка содержания элемента: x.Tags.Contains("value")
-    /// </summary>
-    Contains,
-    
-    /// <summary>
-    /// Проверка на непустой массив: x.Tags.Any()
-    /// </summary>
-    Any,
-    
-    /// <summary>
-    /// Подсчет элементов: x.Tags.Count() > N (для будущей реализации)
-    /// </summary>
-    Count
-}
-
-/// <summary>
 /// Информация о сортировке
 /// </summary>
 public record OrderingExpression(
