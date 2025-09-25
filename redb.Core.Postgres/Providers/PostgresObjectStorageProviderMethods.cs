@@ -1,6 +1,7 @@
 using redb.Core.DBModels;
 using redb.Core.Utils;
 using System.Text.Json.Serialization;
+using redb.Core.Postgres.Extensions;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using System.Collections;
@@ -130,7 +131,7 @@ namespace redb.Core.Postgres.Providers
             // Получаем все public свойства Class объекта через рефлексию
             var classType = classObject.GetType();
             var properties = classType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => !p.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any())
+                .Where(p => !p.ShouldIgnoreForRedb())
                 .ToArray();
 
             // Получаем структуры схемы для поиска

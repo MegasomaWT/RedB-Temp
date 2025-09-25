@@ -5,6 +5,7 @@ using redb.Core.Serialization;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using redb.Core.Postgres.Extensions;
 using System.Text.Encodings.Web;
 using System.Threading.Tasks;
 using redb.Core.Models.Contracts;
@@ -237,8 +238,8 @@ namespace redb.Core.Postgres.Providers
                 var property = propertiesType.GetProperty(structure.Name);
                 if (property == null) continue;
 
-                // 🚫 ИГНОРИРУЕМ поля с атрибутом [JsonIgnore]
-                if (property.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any()) continue;
+                // 🚫 ИГНОРИРУЕМ поля с атрибутом [JsonIgnore] или [RedbIgnore]
+                if (property.ShouldIgnoreForRedb()) continue;
 
                 var rawValue = property.GetValue(properties);
 
@@ -337,8 +338,8 @@ namespace redb.Core.Postgres.Providers
                 var property = propertiesType.GetProperty(structure.Name);
                 if (property == null) continue;
 
-                // Игнорируем поля с атрибутом [JsonIgnore]
-                if (property.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any()) continue;
+                // Игнорируем поля с атрибутом [JsonIgnore] или [RedbIgnore]
+                if (property.ShouldIgnoreForRedb()) continue;
 
                 var rawValue = property.GetValue(properties);
                 var dbType = structureTypes.GetValueOrDefault(structure.Id, "String");

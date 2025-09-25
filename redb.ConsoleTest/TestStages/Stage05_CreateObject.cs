@@ -284,6 +284,10 @@ namespace redb.ConsoleTest.TestStages
 
             CreatedObjectId = await redb.SaveAsync(newObj); // Сохраняем объект
 
+            var testArrayMod = await redb.LoadAsync<MixedTestProps>(CreatedObjectId);
+            testArrayMod.properties.Contacts[0].Type = "test";
+            await redb.SaveAsync(testArrayMod);
+
             logger.LogInformation("✅ Объект создан с ID: {newId}", CreatedObjectId);
             
             // 🔬 ДОПОЛНИТЕЛЬНЫЙ ТЕСТ: ОБЪЕКТ С ЯВНЫМИ NULL ПОЛЯМИ

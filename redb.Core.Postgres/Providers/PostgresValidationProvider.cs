@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
+using redb.Core.Postgres.Extensions;
 using redb.Core.Models.Entities;
 using redb.Core.Models.Contracts;
 
@@ -98,7 +99,7 @@ namespace redb.Core.Postgres.Providers
         {
             var result = new SchemaValidationResult { IsValid = true };
             var properties = typeof(TProps).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => !p.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any())
+                .Where(p => !p.ShouldIgnoreForRedb())
                 .ToArray();
             var nullabilityContext = new NullabilityInfoContext();
 
@@ -154,7 +155,7 @@ namespace redb.Core.Postgres.Providers
         {
             var report = new SchemaChangeReport();
             var properties = typeof(TProps).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => !p.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any())
+                .Where(p => !p.ShouldIgnoreForRedb())
                 .ToArray();
             var nullabilityContext = new NullabilityInfoContext();
 

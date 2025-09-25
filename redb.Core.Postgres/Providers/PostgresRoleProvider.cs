@@ -68,6 +68,7 @@ namespace redb.Core.Postgres.Providers
                     {
                         _context.Set<_RUsersRole>().Add(new _RUsersRole
                         {
+                            Id = _context.GetNextKey(),
                             IdUser = userId,
                             IdRole = newRole.Id
                         });
@@ -206,6 +207,7 @@ namespace redb.Core.Postgres.Providers
             // Создаем новую связь
             _context.UsersRoles.Add(new _RUsersRole
             {
+                Id = _context.GetNextKey(),
                 IdUser = user.Id,
                 IdRole = role.Id
             });
@@ -255,6 +257,7 @@ namespace redb.Core.Postgres.Providers
                     {
                         _context.UsersRoles.Add(new _RUsersRole
                         {
+                            Id = _context.GetNextKey(),
                             IdUser = user.Id,
                             IdRole = role.Id
                         });

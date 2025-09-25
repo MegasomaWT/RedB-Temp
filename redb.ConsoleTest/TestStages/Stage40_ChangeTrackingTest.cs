@@ -125,7 +125,7 @@ namespace redb.ConsoleTest.TestStages
                 testObj.properties.Stock = 250;
                 
                 // 🧪 ТЕСТИРУЕМ: изменяем один элемент массива Tags1
-                testObj.properties.Tags1[0] = "stage40-UPDATED";
+                testObj.properties.Tags1[0] = "stage40-UPDATED1";
                 
                 logger.LogInformation($"   🔧 Изменили Age: {testObj.properties.Age}");
                 logger.LogInformation($"   🔧 Изменили Stock: {testObj.properties.Stock}");

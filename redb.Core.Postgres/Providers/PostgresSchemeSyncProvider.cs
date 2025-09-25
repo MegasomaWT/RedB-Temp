@@ -15,6 +15,7 @@ using redb.Core.Caching;
 using System;
 using System.Collections.Concurrent;
 using System.Text.Json.Serialization;
+using redb.Core.Postgres.Extensions;
 using System.Text.Json;
 
 namespace redb.Core.Postgres.Providers
@@ -122,9 +123,9 @@ namespace redb.Core.Postgres.Providers
             if (visitedTypes.Contains(type)) return;
             visitedTypes.Add(type);
 
-            // Получение свойств типа через рефлексию (исключаем поля с [JsonIgnore])
+            // Получение свойств типа через рефлексию (исключаем поля с [JsonIgnore] и [RedbIgnore])
             var properties = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                .Where(p => !p.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any())
+                .Where(p => !p.ShouldIgnoreForRedb())
                 .ToArray();
             var nullabilityContext = new NullabilityInfoContext();
 

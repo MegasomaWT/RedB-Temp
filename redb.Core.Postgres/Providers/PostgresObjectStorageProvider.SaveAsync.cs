@@ -6,6 +6,7 @@ using redb.Core.Models.Entities;
 using redb.Core.Models.Configuration;
 using redb.Core.Models.Security;
 using System.Text.Json.Serialization;
+using redb.Core.Postgres.Extensions;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Collections;
@@ -596,10 +597,9 @@ namespace redb.Core.Postgres.Providers
                     continue;
                 }
 
-                // 🚫 ИГНОРИРУЕМ поля с атрибутом [JsonIgnore]
-                if (property.GetCustomAttributes(typeof(JsonIgnoreAttribute), false).Any()) 
+                // 🚫 ИГНОРИРУЕМ поля с атрибутом [JsonIgnore] или [RedbIgnore]
+                if (property.ShouldIgnoreForRedb())
                 {
-
                     continue;
                 }
 
@@ -1399,6 +1399,11 @@ namespace redb.Core.Postgres.Providers
                 {
                     // Value не существует - INSERT
 
+                    // ✅ ИСПРАВЛЕНИЕ FK CONSTRAINT: принудительно убираем ArrayParentId для embedded полей
+                    if (newValue.ArrayParentId.HasValue && !newValue.ArrayIndex.HasValue)
+                    {
+                        newValue.ArrayParentId = null; // embedded поля должны быть флаттенными
+                    }
 
                     valuesToInsert.Add(newValue);
                     statsInserted++;
