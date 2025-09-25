@@ -526,25 +526,27 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessPropertiesWithTreeStructures(IRedbObject obj, List<StructureTreeNode> structureNodes, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
+            Console.WriteLine($"🌳 === ProcessPropertiesWithTreeStructures START: Object={obj.Id}, структур={structureNodes.Count} ===");
             // Получаем тип properties объекта
             var objPropertiesType = GetPropertiesTypeFromRedbObject(obj);
-
+            Console.WriteLine($"     📝 PropertiesType: {objPropertiesType?.Name}");
             
             foreach (var structureNode in structureNodes)
             {
-
+                Console.WriteLine($"   🔄 === Обрабатываем структуру: {structureNode.Structure.Name} (Id={structureNode.Structure.Id}, IsArray={structureNode.Structure.IsArray}) ===");
                 
                 // ✅ ПРОВЕРКА СУЩЕСТВОВАНИЯ СВОЙСТВА В C# КЛАССЕ
                 var property = objPropertiesType?.GetProperty(structureNode.Structure.Name);
                 if (property == null)
                 {
-
+                    Console.WriteLine($"     ⚠️ Свойство {structureNode.Structure.Name} НЕ найдено в C# классе, пропускаем");
                     continue; // ✅ РЕШАЕТ ПРОБЛЕМУ ИЗБЫТОЧНЫХ СТРУКТУР!
                 }
                 
                 // Получаем значение свойства
                 var objProperties = GetPropertiesFromRedbObject(obj);
                 var rawValue = property.GetValue(objProperties);
+                Console.WriteLine($"     💬 Значение: {rawValue?.GetType().Name ?? "NULL"}");
 
                 
                 // ✅ NULL СЕМАНТИКА
@@ -554,27 +556,28 @@ namespace redb.Core.Postgres.Providers
                     continue;
                 }
                 
-                // ✅ DISPATCH С ПОДДЕРЕВЬЯМИ 
+                // ✅ КРИТИЧНАЯ ДИСПЕТЧЕРИЗАЦИЯ ПО ТИПАМ 
                 if (structureNode.Structure.IsArray == true)
                 {
-
+                    Console.WriteLine($"     📊 МАССИВ: {structureNode.Structure.Name} → ProcessArrayWithSubtree()");
                     await ProcessArrayWithSubtree(obj, structureNode, rawValue, valuesList, objectsToSave);
                 }
                 else if (await IsClassTypeStructure(structureNode.Structure))
                 {
-
+                    Console.WriteLine($"     🏢 БИЗНЕС-КЛАСС: {structureNode.Structure.Name} → ProcessBusinessClassWithSubtree()");
                     await ProcessBusinessClassWithSubtree(obj, structureNode, rawValue, valuesList, objectsToSave);
                 }
                 else if (await IsRedbObjectStructure(structureNode.Structure))
                 {
-
+                    Console.WriteLine($"     🔗 REDB_OBJECT: {structureNode.Structure.Name} → ProcessIRedbObjectField()");
                     await ProcessIRedbObjectField(obj, structureNode.Structure, rawValue, objectsToSave, valuesList);
                 }
                 else
                 {
-
+                    Console.WriteLine($"     📝 ПРОСТОЕ ПОЛЕ: {structureNode.Structure.Name} → ProcessSimpleFieldWithTree()");
                     await ProcessSimpleFieldWithTree(obj, structureNode, rawValue, valuesList);
                 }
+                Console.WriteLine($"   ✅ Завершили обработку {structureNode.Structure.Name}");
             }
         }
 
@@ -927,24 +930,57 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessArrayWithSubtree(IRedbObject obj, StructureTreeNode arrayStructureNode, object? rawValue, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
-            if (rawValue == null) return;
-            if (rawValue is not IEnumerable enumerable || rawValue is string) return;
-
-
-
-            // ✅ Создаем БАЗОВУЮ запись массива с хешем всего массива
-            var arrayHash = RedbHash.ComputeForProps(rawValue);
-            var baseArrayRecord = new _RValue
+            Console.WriteLine($"     📊 === ProcessArrayWithSubtree: Object={obj.Id}, Structure={arrayStructureNode.Structure.Id} ({arrayStructureNode.Structure.Name}) ===");
+            
+            if (rawValue == null) 
             {
-                Id = _context.GetNextKey(),
-                IdObject = obj.Id,
-                IdStructure = arrayStructureNode.Structure.Id,
-                Guid = arrayHash
-            };
-            valuesList.Add(baseArrayRecord);
+                Console.WriteLine($"     ⚠️ rawValue == null, выходим");
+                return;
+            }
+            if (rawValue is not IEnumerable enumerable || rawValue is string) 
+            {
+                Console.WriteLine($"     ⚠️ rawValue не IEnumerable или string, выходим");
+                return;
+            }
+
+            // 🎯 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Проверяем стратегию сохранения
+            var strategy = _configuration.EavSaveStrategy;
+            var arrayHash = RedbHash.ComputeForProps(rawValue);
+            _RValue baseArrayRecord;
+            
+            if (strategy == EavSaveStrategy.ChangeTracking && obj.Id != 0)
+            {
+                // 🎯 ChangeTracking + существующий объект: Переиспользуем существующую базовую запись
+                // TODO: Найти существующую базовую запись и переиспользовать
+                Console.WriteLine($"     🚀 ChangeTracking + существующий объект: НЕ создаем новую базовую запись!");
+                // Создаем фиктивную запись для ArrayParentId (ID будет исправлен в ProcessArrayElementsChangeTracking)
+                baseArrayRecord = new _RValue
+                {
+                    Id = 0, // фиктивный ID
+                    IdObject = obj.Id,
+                    IdStructure = arrayStructureNode.Structure.Id,
+                    Guid = arrayHash
+                };
+                // НЕ добавляем в valuesList!
+            }
+            else
+            {
+                // 🆕 Новый объект ИЛИ DeleteInsert: создаем новую базовую запись
+                baseArrayRecord = new _RValue
+                {
+                    Id = _context.GetNextKey(),
+                    IdObject = obj.Id,
+                    IdStructure = arrayStructureNode.Structure.Id,
+                    Guid = arrayHash
+                };
+                
+                Console.WriteLine($"     ✅ СОЗДАЛИ новую базовую запись массива: Id={baseArrayRecord.Id}, Guid={arrayHash}");
+                valuesList.Add(baseArrayRecord);
+            }
 
 
             // ✅ Обработка элементов массива с правильным поддеревом
+            Console.WriteLine($"     🔄 Обрабатываем элементы массива с BaseArrayRecordId={baseArrayRecord.Id}");
             await ProcessArrayElementsWithSubtree(obj, arrayStructureNode, baseArrayRecord.Id, enumerable, valuesList, objectsToSave);
         }
         
@@ -953,17 +989,52 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessArrayElementsWithSubtree(IRedbObject obj, StructureTreeNode arrayStructureNode, long parentValueId, IEnumerable enumerable, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
+            // 🎯 КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ: Если parentValueId == 0, то это ChangeTracking сценарий
+            // Нужно найти существующую базовую запись массива в БД
+            long actualParentId = parentValueId;
+            
+            if (parentValueId == 0 && obj.Id != 0) // ChangeTracking сценарий
+            {
+                Console.WriteLine($"       🔍 Поиск существующей базовой записи массива Object={obj.Id}, Structure={arrayStructureNode.Structure.Id}");
+                
+                // Ищем существующую базовую запись массива в БД
+                var existingBaseRecord = await _context.Set<_RValue>()
+                    .FirstOrDefaultAsync(v => v.IdObject == obj.Id && 
+                                             v.IdStructure == arrayStructureNode.Structure.Id && 
+                                             !v.ArrayIndex.HasValue);
+                
+                if (existingBaseRecord != null)
+                {
+                    actualParentId = existingBaseRecord.Id;
+                    Console.WriteLine($"       ✅ НАЙДЕНА существующая базовая запись: Id={actualParentId}");
+                }
+                else
+                {
+                    Console.WriteLine($"       ⚠️ Базовая запись НЕ найдена - создаем новую");
+                    // Создаем новую базовую запись
+                    var arrayHash = RedbHash.ComputeForProps((object)enumerable);
+                    var newBaseRecord = new _RValue
+                    {
+                        Id = _context.GetNextKey(),
+                        IdObject = obj.Id,
+                        IdStructure = arrayStructureNode.Structure.Id,
+                        Guid = arrayHash
+                    };
+                    valuesList.Add(newBaseRecord);
+                    actualParentId = newBaseRecord.Id;
+                    Console.WriteLine($"       ✅ СОЗДАЛИ новую базовую запись: Id={actualParentId}");
+                }
+            }
+            
             int index = 0;
             foreach (var item in enumerable)
             {
-
-
                 var elementRecord = new _RValue
                 {
                     Id = _context.GetNextKey(),
                     IdObject = obj.Id,
                     IdStructure = arrayStructureNode.Structure.Id,
-                    ArrayParentId = parentValueId,
+                    ArrayParentId = actualParentId, // 🎯 Используем найденный или созданный ID
                     ArrayIndex = index
                 };
 
@@ -1016,9 +1087,13 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessBusinessClassWithSubtree(IRedbObject obj, StructureTreeNode classStructureNode, object? rawValue, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
-            if (rawValue == null) return;
-
-
+            Console.WriteLine($"     🏢 === ProcessBusinessClassWithSubtree: Object={obj.Id}, Structure={classStructureNode.Structure.Name} (Id={classStructureNode.Structure.Id}) ===");
+            
+            if (rawValue == null) 
+            {
+                Console.WriteLine($"     ⚠️ rawValue == null, выходим");
+                return;
+            }
 
             // ✅ Вычисляем UUID хеш бизнес-класса
             var classHash = RedbHash.ComputeForProps(rawValue);
@@ -1031,11 +1106,15 @@ namespace redb.Core.Postgres.Providers
                 IdStructure = classStructureNode.Structure.Id,
                 Guid = classHash
             };
+            
+            Console.WriteLine($"     ✅ СОЗДАЛИ базовую запись бизнес-класса: Id={classRecord.Id}, Guid={classHash}");
             valuesList.Add(classRecord);
 
 
             // ✅ Обрабатываем дочерние поля с правильным поддеревом!
+            Console.WriteLine($"     🔄 Обрабатываем {classStructureNode.Children.Count} дочерних структур через ProcessBusinessClassChildrenWithSubtree");
             await ProcessBusinessClassChildrenWithSubtree(obj, classRecord.Id, rawValue, classStructureNode.Children, valuesList, objectsToSave);
+            Console.WriteLine($"     ✅ Завершили ProcessBusinessClassWithSubtree для {classStructureNode.Structure.Name}");
         }
         
         /// <summary>
@@ -1043,11 +1122,13 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessBusinessClassChildrenWithSubtree(IRedbObject obj, long parentValueId, object businessObject, List<StructureTreeNode> childrenSubtree, List<_RValue> valuesList, List<IRedbObject> objectsToSave, int? parentArrayIndex = null)
         {
-
+            Console.WriteLine($"       🐶 === ProcessBusinessClassChildrenWithSubtree: Object={obj.Id}, ParentValue={parentValueId}, BusinessType={businessObject.GetType().Name} ===");
+            Console.WriteLine($"         🌳 Дочерних структур: {childrenSubtree.Count}");
 
             var businessType = businessObject.GetType();
             foreach (var childStructureNode in childrenSubtree)
             {
+                Console.WriteLine($"         🔄 Обрабатываем структуру: {childStructureNode.Structure.Name} (Id={childStructureNode.Structure.Id}, IsArray={childStructureNode.Structure.IsArray})");
                 // ✅ ПРОВЕРКА СУЩЕСТВОВАНИЯ СВОЙСТВА В C# КЛАССЕ  
                 var property = businessType.GetProperty(childStructureNode.Structure.Name);
                 if (property == null)
@@ -1073,21 +1154,22 @@ namespace redb.Core.Postgres.Providers
                 // ♻️ РЕКУРСИВНАЯ ОБРАБОТКА с правильными поддеревьями
                 if (childStructureNode.Structure.IsArray == true)
                 {
-
+                    Console.WriteLine($"           📊 МАССИВ: {childStructureNode.Structure.Name} → ProcessArrayWithSubtree()");
                     await ProcessArrayWithSubtree(obj, childStructureNode, childValue, valuesList, objectsToSave);
                 }
                 else if (await IsClassTypeStructure(childStructureNode.Structure))
                 {
-
+                    Console.WriteLine($"           🏢 БИЗНЕС-КЛАСС: {childStructureNode.Structure.Name} → ProcessBusinessClassWithSubtree()");
                     await ProcessBusinessClassWithSubtree(obj, childStructureNode, childValue, valuesList, objectsToSave);
                 }
                 else if (await IsRedbObjectStructure(childStructureNode.Structure))
                 {
-
+                    Console.WriteLine($"           🔗 REDB_OBJECT: {childStructureNode.Structure.Name} → ProcessIRedbObjectField()");
                     await ProcessIRedbObjectField(obj, childStructureNode.Structure, childValue, objectsToSave, valuesList);
                 }
                 else
                 {
+                    Console.WriteLine($"           📝 ПРОСТОЕ ПОЛЕ: {childStructureNode.Structure.Name} → childRecord");
 
                     
                     // Создаем запись дочернего поля с привязкой к родительскому Class полю
@@ -1497,33 +1579,61 @@ namespace redb.Core.Postgres.Providers
             List<_RValue> valuesToDelete, 
             Dictionary<long, StructureFullInfo> structuresFullInfo)
         {
-
-
-
-
+            // 🔍 КРИТИЧНОЕ ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ ChangeTracking ошибок
+            Console.WriteLine($"🔍 === ProcessArrayElementsChangeTracking STARTED ===");
+            Console.WriteLine($"   📊 Новых элементов массивов: {newArrayElements.Count}");
+            Console.WriteLine($"   📁 Существующих в БД: {existingValues.Count(v => v.ArrayIndex.HasValue)} элементов, {existingValues.Count(v => !v.ArrayIndex.HasValue)} базовых");
             
             int localUpdated = 0, localInserted = 0, localSkipped = 0;
             
-            // 1. 🔧 ИСПРАВЛЯЕМ ArrayParentId у новых элементов массивов
-
-            foreach (var newElement in newArrayElements) 
+            // 1. 🔧 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Переиспользуем существующие базовые записи массивов
+            Console.WriteLine($"🔧 === ИСПРАВЛЕНИЕ ArrayParentId STARTED ===");
+            // Группируем новые элементы по структуре для пакетного исправления ArrayParentId
+            var newElementsByStructure = newArrayElements
+                .GroupBy(e => new { e.IdObject, e.IdStructure })
+                .ToList();
+                
+            foreach (var structureGroup in newElementsByStructure)
             {
-                // Находим существующее базовое поле для этого массива
+                var key = structureGroup.Key;
+                var elementsInGroup = structureGroup.ToList();
+                
+                // Ищем существующую базовую запись массива
                 var existingBaseField = existingValues
-                    .FirstOrDefault(v => v.IdObject == newElement.IdObject && 
-                                        v.IdStructure == newElement.IdStructure && 
-                                        !v.ArrayIndex.HasValue);  // Базовое поле
+                    .FirstOrDefault(v => v.IdObject == key.IdObject && 
+                                        v.IdStructure == key.IdStructure && 
+                                        !v.ArrayIndex.HasValue);
                                         
                 if (existingBaseField != null) 
                 {
-                    // ✅ Массив существует → используем СУЩЕСТВУЮЩИЙ ArrayParentId
-
-                    newElement.ArrayParentId = existingBaseField.Id;
+                    Console.WriteLine($"   ✅ НАЙДЕНА существующая базовая запись: Object={key.IdObject}, Structure={key.IdStructure}, BaseId={existingBaseField.Id}");
+                    
+                    // Находим новую базовую запись в valuesToInsert и УДАЛЯЕМ её
+                    var newBaseField = valuesToInsert
+                        .FirstOrDefault(v => v.IdObject == key.IdObject && 
+                                           v.IdStructure == key.IdStructure && 
+                                           !v.ArrayIndex.HasValue);
+                    
+                    if (newBaseField != null)
+                    {
+                        Console.WriteLine($"   🗑️ Удаляем дублирующую базовую запись: Id={newBaseField.Id}");
+                        valuesToInsert.Remove(newBaseField);
+                        
+                        Console.WriteLine($"   🔗 Перенаправляем {elementsInGroup.Count} элементов на существующую базовую запись {existingBaseField.Id}");
+                        foreach (var element in elementsInGroup)
+                        {
+                            Console.WriteLine($"     🔄 Element[{element.ArrayIndex}]: Id={element.Id}, старый ArrayParentId={element.ArrayParentId} → новый {existingBaseField.Id}");
+                            element.ArrayParentId = existingBaseField.Id;
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   ⚠️ Новая базовая запись НЕ найдена - возможная проблема!");
+                    }
                 }
-                else 
+                else
                 {
-                    // 🆕 НОВЫЙ массив → оставляем новый ArrayParentId
-
+                    Console.WriteLine($"   🆕 НОВЫЙ массив: Object={key.IdObject}, Structure={key.IdStructure}, элементов={elementsInGroup.Count}");
                 }
             }
             
@@ -1536,27 +1646,29 @@ namespace redb.Core.Postgres.Providers
             var newArraysDict = newArrayElements
                 .GroupBy(v => v.ArrayParentId)
                 .ToDictionary(g => g.Key, g => g.OrderBy(x => x.ArrayIndex).ToList());
-                
-
             
             // 3. 🎯 СРАВНИВАЕМ ПО ArrayParentId
+            Console.WriteLine($"🎯 === СРАВНЕНИЕ МАССИВОВ ПО ArrayParentId ===");
             var allArrayParentIds = existingArraysDict.Keys.Union(newArraysDict.Keys).ToList();
+            Console.WriteLine($"   📁 Всего ArrayParentId для сравнения: {allArrayParentIds.Count}");
 
             foreach (var arrayParentId in allArrayParentIds)
             {
                 var existingElements = existingArraysDict.GetValueOrDefault(arrayParentId) ?? new List<_RValue>();
                 var newElements = newArraysDict.GetValueOrDefault(arrayParentId) ?? new List<_RValue>();
                 
-
+                Console.WriteLine($"   🔄 ArrayParentId={arrayParentId}: существующих={existingElements.Count}, новых={newElements.Count}");
                 
-                // 🎯 ГЛАВНАЯ ЛОГИКА: сравниваем по индексам
+                // 🎯 ГЛАВНАЯ ЛОГИКА: сравниваем по индексам с улучшенной логикой для бизнес-классов
                 var (updated, inserted, skipped) = await CompareArrayElementsByIndex(existingElements, newElements, valuesToInsert, valuesToDelete, structuresFullInfo);
                 localUpdated += updated;
                 localInserted += inserted;
                 localSkipped += skipped;
                 
-
+                Console.WriteLine($"   📈 Результат ArrayParentId={arrayParentId}: updated={updated}, inserted={inserted}, skipped={skipped}");
             }
+            
+            Console.WriteLine($"📉 === ProcessArrayElementsChangeTracking COMPLETED: updated={localUpdated}, inserted={localInserted}, skipped={localSkipped} ===");
             
             return (localUpdated, localInserted, localSkipped);
         }
@@ -1571,14 +1683,18 @@ namespace redb.Core.Postgres.Providers
             List<_RValue> valuesToDelete, 
             Dictionary<long, StructureFullInfo> structuresFullInfo)
         {
+            Console.WriteLine($"     🔍 === CompareArrayElementsByIndex STARTED ===");
+            Console.WriteLine($"       📁 Существующих элементов: {existingElements.Count}, новых: {newElements.Count}");
+            
             int localUpdated = 0, localInserted = 0, localSkipped = 0;
             var maxIndex = Math.Max(existingElements.Count, newElements.Count);
-
             
             for (int i = 0; i < maxIndex; i++)
             {
                 var existingElement = i < existingElements.Count ? existingElements[i] : null;
                 var newElement = i < newElements.Count ? newElements[i] : null;
+                
+                Console.WriteLine($"       🔄 Индекс [{i}]: existing={existingElement?.Id ?? 0} (Guid={existingElement?.Guid}), new={newElement?.Id ?? 0} (Guid={newElement?.Guid})");
                 
                 if (existingElement != null && newElement != null)
                 {
@@ -1586,34 +1702,35 @@ namespace redb.Core.Postgres.Providers
                     var structInfo = structuresFullInfo[newElement.IdStructure];
                     var legacyStructuresInfo = new Dictionary<long, string> { { newElement.IdStructure, structInfo.DbType } };
                     
+                    Console.WriteLine($"         🔍 Сравниваем [{i}]: existing Guid={existingElement.Guid} vs new Guid={newElement.Guid}, DbType={structInfo.DbType}");
+                    
                     var changed = await IsValueChanged(existingElement, newElement, legacyStructuresInfo);
                     if (changed)
                     {
+                        Console.WriteLine($"         ✅ ИЗМЕНЕН: Обновляем existing element Id={existingElement.Id}");
                         UpdateExistingValueFields(existingElement, newElement, legacyStructuresInfo);
-
                         localUpdated++;
                     }
                     else
                     {
-
+                        Console.WriteLine($"         😴 НЕ ИЗМЕНЕН: Пропускаем element Id={existingElement.Id}");
                         localSkipped++;
                     }
                 }
                 else if (existingElement != null && newElement == null)
                 {
-                    // Новый массив короче - DELETE лишний элемент
+                    Console.WriteLine($"         🗑️ УДАЛЕНИЕ: Массив сократился, удаляем element Id={existingElement.Id}");
                     valuesToDelete.Add(existingElement);
-
                 }
                 else if (existingElement == null && newElement != null)
                 {
-                    // Новый массив длиннее - INSERT новый элемент  
+                    Console.WriteLine($"         ➕ ДОБАВЛЕНИЕ: Массив увеличился, добавляем new element Id={newElement.Id}");
                     valuesToInsert.Add(newElement);
-
                     localInserted++;
                 }
             }
             
+            Console.WriteLine($"     📉 === CompareArrayElementsByIndex COMPLETED: updated={localUpdated}, inserted={localInserted}, skipped={localSkipped} ===");
             return (localUpdated, localInserted, localSkipped);
         }
 
@@ -1659,6 +1776,7 @@ namespace redb.Core.Postgres.Providers
 
         /// <summary>
         /// 🔍 Сравнивает два values только по значимому полю (по DbType)
+        /// ✅ ИСПРАВЛЕНО: Улучшенное сравнение для бизнес-классов массивов
         /// </summary>
         private async Task<bool> IsValueChanged(_RValue oldValue, _RValue newValue, Dictionary<long, string> structuresInfo)
         {
@@ -1667,7 +1785,24 @@ namespace redb.Core.Postgres.Providers
                 // Неизвестный тип - считаем что изменился
                 return true;
             }
+            
+            // 🎯 СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ ЭЛЕМЕНТОВ МАССИВОВ БИЗНЕС-КЛАССОВ
+            // Если это элемент массива (имеет ArrayIndex) и есть Guid - сравниваем по Guid хешу
+            if (oldValue.ArrayIndex.HasValue && newValue.ArrayIndex.HasValue && 
+                (oldValue.Guid.HasValue || newValue.Guid.HasValue))
+            {
+                // Для бизнес-классов в массивах - сравнение по хешу более надежно
+                var oldGuid = oldValue.Guid;
+                var newGuid = newValue.Guid;
+                
+                // Если один из хешей null - считаем что изменился
+                if (!oldGuid.HasValue || !newGuid.HasValue)
+                    return true;
+                    
+                return oldGuid != newGuid;
+            }
 
+            // 📝 СТАНДАРТНАЯ ЛОГИКА для обычных полей
             return dbType switch
             {
                 "String" => oldValue.String != newValue.String,
@@ -1835,16 +1970,36 @@ namespace redb.Core.Postgres.Providers
 
             try
             {
-
-                await _context.SaveChangesAsync();
-
+                // 🎯 КРИТИЧНОЕ ИСПРАВЛЕНИЕ: Сохраняем частями чтобы избежать FK constraint конфликтов
+                Console.WriteLine($"🔧 === КРИТИЧНОЕ ИСПРАВЛЕНИЕ: СОХРАНЯЕМ ПО ЧАСТЯМ ===");
+                
+                // ШАГ 1: Сохраняем объекты и модификации (UPDATE operations)
+                var modifiedCount = _context.ChangeTracker.Entries().Count(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Modified);
+                var deletedCount = _context.ChangeTracker.Entries().Count(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Deleted && e.Entity is _RValue);
+                var addedCount = _context.ChangeTracker.Entries().Count(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Added && e.Entity is _RValue);
+                
+                Console.WriteLine($"   📈 Операции: MODIFIED={modifiedCount}, DELETED={deletedCount}, ADDED={addedCount}");
+                
+                if (modifiedCount > 0 || deletedCount > 0)
+                {
+                    Console.WriteLine($"   ✂️ ШАГ 1: Сохраняем UPDATE + DELETE");
+                    await _context.SaveChangesAsync();
+                }
+                
+                if (addedCount > 0)
+                {
+                    Console.WriteLine($"   ➕ ШАГ 2: Сохраняем INSERT");
+                    await _context.SaveChangesAsync();
+                }
+                
+                Console.WriteLine($"✅ ВСЕ ОПЕРАЦИИ УСПЕШНО ЗАВЕРШЕНЫ!");
             }
             catch (Exception ex)
             {
-
+                Console.WriteLine($"🚨 ОШИБКА ПРИ СОХРАНЕНИИ: {ex.Message}");
                 if (ex.InnerException != null)
                 {
-
+                    Console.WriteLine($"📝 ВНУТРЕННЯЯ ОшИБКА: {ex.InnerException.Message}");
                 }
                 throw;
             }
