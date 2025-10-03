@@ -919,7 +919,7 @@ namespace redb.Core.Postgres.Providers
         /// <summary>
         /// 📊 Массив с поддеревом структур
         /// </summary>
-        private async Task ProcessArrayWithSubtree(IRedbObject obj, StructureTreeNode arrayStructureNode, object? rawValue, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
+        private async Task ProcessArrayWithSubtree(IRedbObject obj, StructureTreeNode arrayStructureNode, object? rawValue, List<_RValue> valuesList, List<IRedbObject> objectsToSave, long? parentValueId = null, int? parentArrayIndex = null)
         {
             if (rawValue == null) 
             {
@@ -957,6 +957,8 @@ namespace redb.Core.Postgres.Providers
                 Id = _context.GetNextKey(),
                 IdObject = obj.Id,
                 IdStructure = arrayStructureNode.Structure.Id,
+                ArrayParentId = parentValueId,      // ✅ Привязка к родительскому Class полю
+                ArrayIndex = parentArrayIndex,      // ✅ Наследуем ArrayIndex от родительского массива
                 Guid = arrayHash
             };
                 
@@ -1125,7 +1127,7 @@ namespace redb.Core.Postgres.Providers
                 // ♻️ РЕКУРСИВНАЯ ОБРАБОТКА с правильными поддеревьями
                 if (childStructureNode.Structure.IsArray == true)
                 {
-                    await ProcessArrayWithSubtree(obj, childStructureNode, childValue, valuesList, objectsToSave);
+                    await ProcessArrayWithSubtree(obj, childStructureNode, childValue, valuesList, objectsToSave, parentValueId, parentArrayIndex);
                 }
                 else if (await IsClassTypeStructure(childStructureNode.Structure))
                 {
