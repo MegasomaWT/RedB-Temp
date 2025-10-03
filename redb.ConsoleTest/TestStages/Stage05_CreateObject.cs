@@ -283,13 +283,29 @@ namespace redb.ConsoleTest.TestStages
             logger.LogInformation($"   📊 Address3 (nullable): {(newObj.properties.Address3 == null ? "NULL" : $"Filled: {newObj.properties.Address3.City}")}");
 
             CreatedObjectId = await redb.SaveAsync(newObj); // Сохраняем объект
-
-            var testArrayMod = await redb.LoadAsync<MixedTestProps>(CreatedObjectId);
-            testArrayMod.properties.Contacts[0].Type = "test";
-            await redb.SaveAsync(testArrayMod);
-
-            logger.LogInformation("✅ Объект создан с ID: {newId}", CreatedObjectId);
             
+            logger.LogInformation("✅ Объект создан с ID: {newId}", CreatedObjectId);
+
+            // 🧪 ТЕСТ ИСПРАВЛЕННОЙ ЛОГИКИ ИЗМЕНЕНИЯ МАССИВА
+            logger.LogInformation("🧪 === ТЕСТИРУЕМ ИСПРАВЛЕННУЮ ArrayParentId ЛОГИКУ ===");
+            var testArrayMod = await redb.LoadAsync<MixedTestProps>(CreatedObjectId);
+            logger.LogInformation("✅ Объект загружен, изменяем Contacts[0].Type");
+            testArrayMod.properties.Contacts[0].Type = "test_fixed";
+            logger.LogInformation("🚀 Сохраняем с изменением массива...");
+            await redb.SaveAsync(testArrayMod);
+            logger.LogInformation("✅ ИЗМЕНЕНИЕ МАССИВА УСПЕШНО!");
+            
+            // 🔍 ПРОВЕРЯЕМ ЧТО ИЗМЕНИЛОСЬ В БД
+            logger.LogInformation("🔍 === ПРОВЕРЯЕМ ИЗМЕНЕНИЯ В БАЗЕ ДАННЫХ ===");
+            var changedObj = await redb.LoadAsync<MixedTestProps>(CreatedObjectId);
+            logger.LogInformation("📞 Измененные контакты:");
+            for (int i = 0; i < changedObj.properties.Contacts.Length; i++)
+            {
+                var contact = changedObj.properties.Contacts[i];
+                string indicator = i == 0 ? "🔥 [ИЗМЕНЕН]" : "   [без изменений]";
+                logger.LogInformation("  {indicator} [{index}] Type: '{type}', Value: '{value}', Verified: {verified}",
+                    indicator, i, contact.Type, contact.Value, contact.Verified);
+            }
             // 🔬 ДОПОЛНИТЕЛЬНЫЙ ТЕСТ: ОБЪЕКТ С ЯВНЫМИ NULL ПОЛЯМИ
             logger.LogInformation("🧪 === СОЗДАЕМ ТЕСТОВЫЙ ОБЪЕКТ С NULL ПОЛЯМИ ===");
             var nullTestObj = new RedbObject<AnalyticsRecordProps>

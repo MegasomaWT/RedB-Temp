@@ -14,6 +14,8 @@ using System.Linq;
 using System.Threading.Tasks;
 using System;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using EFCore.BulkExtensions;
 
 namespace redb.Core.Postgres.Providers
 {
@@ -526,28 +528,21 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessPropertiesWithTreeStructures(IRedbObject obj, List<StructureTreeNode> structureNodes, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
-            Console.WriteLine($"🌳 === ProcessPropertiesWithTreeStructures START: Object={obj.Id}, структур={structureNodes.Count} ===");
             // Получаем тип properties объекта
             var objPropertiesType = GetPropertiesTypeFromRedbObject(obj);
-            Console.WriteLine($"     📝 PropertiesType: {objPropertiesType?.Name}");
             
             foreach (var structureNode in structureNodes)
             {
-                Console.WriteLine($"   🔄 === Обрабатываем структуру: {structureNode.Structure.Name} (Id={structureNode.Structure.Id}, IsArray={structureNode.Structure.IsArray}) ===");
-                
                 // ✅ ПРОВЕРКА СУЩЕСТВОВАНИЯ СВОЙСТВА В C# КЛАССЕ
                 var property = objPropertiesType?.GetProperty(structureNode.Structure.Name);
                 if (property == null)
                 {
-                    Console.WriteLine($"     ⚠️ Свойство {structureNode.Structure.Name} НЕ найдено в C# классе, пропускаем");
                     continue; // ✅ РЕШАЕТ ПРОБЛЕМУ ИЗБЫТОЧНЫХ СТРУКТУР!
                 }
                 
                 // Получаем значение свойства
                 var objProperties = GetPropertiesFromRedbObject(obj);
                 var rawValue = property.GetValue(objProperties);
-                Console.WriteLine($"     💬 Значение: {rawValue?.GetType().Name ?? "NULL"}");
-
                 
                 // ✅ NULL СЕМАНТИКА
                 if (!PostgresObjectStorageProviderExtensions.ShouldCreateValueRecord(rawValue, structureNode.Structure.StoreNull ?? false))
@@ -559,25 +554,20 @@ namespace redb.Core.Postgres.Providers
                 // ✅ КРИТИЧНАЯ ДИСПЕТЧЕРИЗАЦИЯ ПО ТИПАМ 
                 if (structureNode.Structure.IsArray == true)
                 {
-                    Console.WriteLine($"     📊 МАССИВ: {structureNode.Structure.Name} → ProcessArrayWithSubtree()");
                     await ProcessArrayWithSubtree(obj, structureNode, rawValue, valuesList, objectsToSave);
                 }
                 else if (await IsClassTypeStructure(structureNode.Structure))
                 {
-                    Console.WriteLine($"     🏢 БИЗНЕС-КЛАСС: {structureNode.Structure.Name} → ProcessBusinessClassWithSubtree()");
                     await ProcessBusinessClassWithSubtree(obj, structureNode, rawValue, valuesList, objectsToSave);
                 }
                 else if (await IsRedbObjectStructure(structureNode.Structure))
                 {
-                    Console.WriteLine($"     🔗 REDB_OBJECT: {structureNode.Structure.Name} → ProcessIRedbObjectField()");
                     await ProcessIRedbObjectField(obj, structureNode.Structure, rawValue, objectsToSave, valuesList);
                 }
                 else
                 {
-                    Console.WriteLine($"     📝 ПРОСТОЕ ПОЛЕ: {structureNode.Structure.Name} → ProcessSimpleFieldWithTree()");
                     await ProcessSimpleFieldWithTree(obj, structureNode, rawValue, valuesList);
                 }
-                Console.WriteLine($"   ✅ Завершили обработку {structureNode.Structure.Name}");
             }
         }
 
@@ -603,6 +593,7 @@ namespace redb.Core.Postgres.Providers
                 // 🚫 ИГНОРИРУЕМ поля с атрибутом [JsonIgnore] или [RedbIgnore]
                 if (property.ShouldIgnoreForRedb())
                 {
+
                     continue;
                 }
 
@@ -930,16 +921,12 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessArrayWithSubtree(IRedbObject obj, StructureTreeNode arrayStructureNode, object? rawValue, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
-            Console.WriteLine($"     📊 === ProcessArrayWithSubtree: Object={obj.Id}, Structure={arrayStructureNode.Structure.Id} ({arrayStructureNode.Structure.Name}) ===");
-            
             if (rawValue == null) 
             {
-                Console.WriteLine($"     ⚠️ rawValue == null, выходим");
                 return;
             }
             if (rawValue is not IEnumerable enumerable || rawValue is string) 
             {
-                Console.WriteLine($"     ⚠️ rawValue не IEnumerable или string, выходим");
                 return;
             }
 
@@ -952,7 +939,6 @@ namespace redb.Core.Postgres.Providers
             {
                 // 🎯 ChangeTracking + существующий объект: Переиспользуем существующую базовую запись
                 // TODO: Найти существующую базовую запись и переиспользовать
-                Console.WriteLine($"     🚀 ChangeTracking + существующий объект: НЕ создаем новую базовую запись!");
                 // Создаем фиктивную запись для ArrayParentId (ID будет исправлен в ProcessArrayElementsChangeTracking)
                 baseArrayRecord = new _RValue
                 {
@@ -967,20 +953,18 @@ namespace redb.Core.Postgres.Providers
             {
                 // 🆕 Новый объект ИЛИ DeleteInsert: создаем новую базовую запись
                 baseArrayRecord = new _RValue
-                {
-                    Id = _context.GetNextKey(),
-                    IdObject = obj.Id,
-                    IdStructure = arrayStructureNode.Structure.Id,
-                    Guid = arrayHash
-                };
+            {
+                Id = _context.GetNextKey(),
+                IdObject = obj.Id,
+                IdStructure = arrayStructureNode.Structure.Id,
+                Guid = arrayHash
+            };
                 
-                Console.WriteLine($"     ✅ СОЗДАЛИ новую базовую запись массива: Id={baseArrayRecord.Id}, Guid={arrayHash}");
-                valuesList.Add(baseArrayRecord);
+            valuesList.Add(baseArrayRecord);
             }
 
 
             // ✅ Обработка элементов массива с правильным поддеревом
-            Console.WriteLine($"     🔄 Обрабатываем элементы массива с BaseArrayRecordId={baseArrayRecord.Id}");
             await ProcessArrayElementsWithSubtree(obj, arrayStructureNode, baseArrayRecord.Id, enumerable, valuesList, objectsToSave);
         }
         
@@ -995,8 +979,6 @@ namespace redb.Core.Postgres.Providers
             
             if (parentValueId == 0 && obj.Id != 0) // ChangeTracking сценарий
             {
-                Console.WriteLine($"       🔍 Поиск существующей базовой записи массива Object={obj.Id}, Structure={arrayStructureNode.Structure.Id}");
-                
                 // Ищем существующую базовую запись массива в БД
                 var existingBaseRecord = await _context.Set<_RValue>()
                     .FirstOrDefaultAsync(v => v.IdObject == obj.Id && 
@@ -1006,11 +988,9 @@ namespace redb.Core.Postgres.Providers
                 if (existingBaseRecord != null)
                 {
                     actualParentId = existingBaseRecord.Id;
-                    Console.WriteLine($"       ✅ НАЙДЕНА существующая базовая запись: Id={actualParentId}");
                 }
                 else
                 {
-                    Console.WriteLine($"       ⚠️ Базовая запись НЕ найдена - создаем новую");
                     // Создаем новую базовую запись
                     var arrayHash = RedbHash.ComputeForProps((object)enumerable);
                     var newBaseRecord = new _RValue
@@ -1022,7 +1002,6 @@ namespace redb.Core.Postgres.Providers
                     };
                     valuesList.Add(newBaseRecord);
                     actualParentId = newBaseRecord.Id;
-                    Console.WriteLine($"       ✅ СОЗДАЛИ новую базовую запись: Id={actualParentId}");
                 }
             }
             
@@ -1045,9 +1024,11 @@ namespace redb.Core.Postgres.Providers
                     // ♻️ РЕКУРСИЯ С ПОДДЕРЕВЬЯМИ: разные типы элементов
                     if (await IsRedbObjectStructure(arrayStructureNode.Structure))
                     {
-                        // 🔗 IRedbObject элемент массива
-                        var targetObject = FindObjectInCollector((IRedbObject)item, objectsToSave);
-                        elementRecord.Long = targetObject?.Id ?? 0;
+                        // 🔗 IRedbObject элемент массива - BULK СТРАТЕГИЯ: берем ID напрямую 
+                        var redbObj = (IRedbObject)item;
+                        var objectId = redbObj.Id;
+                        
+                        elementRecord.Long = objectId;
                         valuesList.Add(elementRecord);
 
                     }
@@ -1087,11 +1068,9 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessBusinessClassWithSubtree(IRedbObject obj, StructureTreeNode classStructureNode, object? rawValue, List<_RValue> valuesList, List<IRedbObject> objectsToSave)
         {
-            Console.WriteLine($"     🏢 === ProcessBusinessClassWithSubtree: Object={obj.Id}, Structure={classStructureNode.Structure.Name} (Id={classStructureNode.Structure.Id}) ===");
-            
+
             if (rawValue == null) 
             {
-                Console.WriteLine($"     ⚠️ rawValue == null, выходим");
                 return;
             }
 
@@ -1107,14 +1086,10 @@ namespace redb.Core.Postgres.Providers
                 Guid = classHash
             };
             
-            Console.WriteLine($"     ✅ СОЗДАЛИ базовую запись бизнес-класса: Id={classRecord.Id}, Guid={classHash}");
             valuesList.Add(classRecord);
 
-
             // ✅ Обрабатываем дочерние поля с правильным поддеревом!
-            Console.WriteLine($"     🔄 Обрабатываем {classStructureNode.Children.Count} дочерних структур через ProcessBusinessClassChildrenWithSubtree");
             await ProcessBusinessClassChildrenWithSubtree(obj, classRecord.Id, rawValue, classStructureNode.Children, valuesList, objectsToSave);
-            Console.WriteLine($"     ✅ Завершили ProcessBusinessClassWithSubtree для {classStructureNode.Structure.Name}");
         }
         
         /// <summary>
@@ -1122,13 +1097,9 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessBusinessClassChildrenWithSubtree(IRedbObject obj, long parentValueId, object businessObject, List<StructureTreeNode> childrenSubtree, List<_RValue> valuesList, List<IRedbObject> objectsToSave, int? parentArrayIndex = null)
         {
-            Console.WriteLine($"       🐶 === ProcessBusinessClassChildrenWithSubtree: Object={obj.Id}, ParentValue={parentValueId}, BusinessType={businessObject.GetType().Name} ===");
-            Console.WriteLine($"         🌳 Дочерних структур: {childrenSubtree.Count}");
-
             var businessType = businessObject.GetType();
             foreach (var childStructureNode in childrenSubtree)
             {
-                Console.WriteLine($"         🔄 Обрабатываем структуру: {childStructureNode.Structure.Name} (Id={childStructureNode.Structure.Id}, IsArray={childStructureNode.Structure.IsArray})");
                 // ✅ ПРОВЕРКА СУЩЕСТВОВАНИЯ СВОЙСТВА В C# КЛАССЕ  
                 var property = businessType.GetProperty(childStructureNode.Structure.Name);
                 if (property == null)
@@ -1154,24 +1125,18 @@ namespace redb.Core.Postgres.Providers
                 // ♻️ РЕКУРСИВНАЯ ОБРАБОТКА с правильными поддеревьями
                 if (childStructureNode.Structure.IsArray == true)
                 {
-                    Console.WriteLine($"           📊 МАССИВ: {childStructureNode.Structure.Name} → ProcessArrayWithSubtree()");
                     await ProcessArrayWithSubtree(obj, childStructureNode, childValue, valuesList, objectsToSave);
                 }
                 else if (await IsClassTypeStructure(childStructureNode.Structure))
                 {
-                    Console.WriteLine($"           🏢 БИЗНЕС-КЛАСС: {childStructureNode.Structure.Name} → ProcessBusinessClassWithSubtree()");
                     await ProcessBusinessClassWithSubtree(obj, childStructureNode, childValue, valuesList, objectsToSave);
                 }
                 else if (await IsRedbObjectStructure(childStructureNode.Structure))
                 {
-                    Console.WriteLine($"           🔗 REDB_OBJECT: {childStructureNode.Structure.Name} → ProcessIRedbObjectField()");
                     await ProcessIRedbObjectField(obj, childStructureNode.Structure, childValue, objectsToSave, valuesList);
                 }
                 else
                 {
-                    Console.WriteLine($"           📝 ПРОСТОЕ ПОЛЕ: {childStructureNode.Structure.Name} → childRecord");
-
-                    
                     // Создаем запись дочернего поля с привязкой к родительскому Class полю
                     var childRecord = new _RValue
                     {
@@ -1214,11 +1179,8 @@ namespace redb.Core.Postgres.Providers
         /// </summary>
         private async Task ProcessSingleIRedbObject(IRedbObject obj, IRedbStructure structure, IRedbObject redbObjectValue, List<IRedbObject> objectsToSave, List<_RValue> valuesList)
         {
-            // ✅ ПОИСК ID В КОЛЛЕКТОРЕ  
-            var targetObject = FindObjectInCollector(redbObjectValue, objectsToSave);
-            var objectId = targetObject?.Id ?? 0;
-            
-
+            // 🎯 BULK СТРАТЕГИЯ: Берем ID напрямую из объекта (уже сохранен рекурсивно)
+            var objectId = redbObjectValue.Id;
             
             var record = new _RValue
             {
@@ -1255,8 +1217,9 @@ namespace redb.Core.Postgres.Providers
             {
                 if (item != null && IsRedbObjectType(item.GetType()))
                 {
-                    var targetObject = FindObjectInCollector((IRedbObject)item, objectsToSave);
-                    var objectId = targetObject?.Id ?? 0;
+                    // 🎯 BULK СТРАТЕГИЯ: Берем ID напрямую из объекта (уже сохранен рекурсивно)
+                    var redbObj = (IRedbObject)item;
+                    var objectId = redbObj.Id;
                     
                     var elementRecord = new _RValue
                     {
@@ -1579,15 +1542,9 @@ namespace redb.Core.Postgres.Providers
             List<_RValue> valuesToDelete, 
             Dictionary<long, StructureFullInfo> structuresFullInfo)
         {
-            // 🔍 КРИТИЧНОЕ ЛОГИРОВАНИЕ ДЛЯ ДИАГНОСТИКИ ChangeTracking ошибок
-            Console.WriteLine($"🔍 === ProcessArrayElementsChangeTracking STARTED ===");
-            Console.WriteLine($"   📊 Новых элементов массивов: {newArrayElements.Count}");
-            Console.WriteLine($"   📁 Существующих в БД: {existingValues.Count(v => v.ArrayIndex.HasValue)} элементов, {existingValues.Count(v => !v.ArrayIndex.HasValue)} базовых");
-            
             int localUpdated = 0, localInserted = 0, localSkipped = 0;
             
             // 1. 🔧 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Переиспользуем существующие базовые записи массивов
-            Console.WriteLine($"🔧 === ИСПРАВЛЕНИЕ ArrayParentId STARTED ===");
             // Группируем новые элементы по структуре для пакетного исправления ArrayParentId
             var newElementsByStructure = newArrayElements
                 .GroupBy(e => new { e.IdObject, e.IdStructure })
@@ -1606,8 +1563,6 @@ namespace redb.Core.Postgres.Providers
                                         
                 if (existingBaseField != null) 
                 {
-                    Console.WriteLine($"   ✅ НАЙДЕНА существующая базовая запись: Object={key.IdObject}, Structure={key.IdStructure}, BaseId={existingBaseField.Id}");
-                    
                     // Находим новую базовую запись в valuesToInsert и УДАЛЯЕМ её
                     var newBaseField = valuesToInsert
                         .FirstOrDefault(v => v.IdObject == key.IdObject && 
@@ -1616,24 +1571,13 @@ namespace redb.Core.Postgres.Providers
                     
                     if (newBaseField != null)
                     {
-                        Console.WriteLine($"   🗑️ Удаляем дублирующую базовую запись: Id={newBaseField.Id}");
                         valuesToInsert.Remove(newBaseField);
                         
-                        Console.WriteLine($"   🔗 Перенаправляем {elementsInGroup.Count} элементов на существующую базовую запись {existingBaseField.Id}");
                         foreach (var element in elementsInGroup)
                         {
-                            Console.WriteLine($"     🔄 Element[{element.ArrayIndex}]: Id={element.Id}, старый ArrayParentId={element.ArrayParentId} → новый {existingBaseField.Id}");
                             element.ArrayParentId = existingBaseField.Id;
                         }
                     }
-                    else
-                    {
-                        Console.WriteLine($"   ⚠️ Новая базовая запись НЕ найдена - возможная проблема!");
-                    }
-                }
-                else
-                {
-                    Console.WriteLine($"   🆕 НОВЫЙ массив: Object={key.IdObject}, Structure={key.IdStructure}, элементов={elementsInGroup.Count}");
                 }
             }
             
@@ -1648,27 +1592,19 @@ namespace redb.Core.Postgres.Providers
                 .ToDictionary(g => g.Key, g => g.OrderBy(x => x.ArrayIndex).ToList());
             
             // 3. 🎯 СРАВНИВАЕМ ПО ArrayParentId
-            Console.WriteLine($"🎯 === СРАВНЕНИЕ МАССИВОВ ПО ArrayParentId ===");
             var allArrayParentIds = existingArraysDict.Keys.Union(newArraysDict.Keys).ToList();
-            Console.WriteLine($"   📁 Всего ArrayParentId для сравнения: {allArrayParentIds.Count}");
 
             foreach (var arrayParentId in allArrayParentIds)
             {
                 var existingElements = existingArraysDict.GetValueOrDefault(arrayParentId) ?? new List<_RValue>();
                 var newElements = newArraysDict.GetValueOrDefault(arrayParentId) ?? new List<_RValue>();
                 
-                Console.WriteLine($"   🔄 ArrayParentId={arrayParentId}: существующих={existingElements.Count}, новых={newElements.Count}");
-                
                 // 🎯 ГЛАВНАЯ ЛОГИКА: сравниваем по индексам с улучшенной логикой для бизнес-классов
                 var (updated, inserted, skipped) = await CompareArrayElementsByIndex(existingElements, newElements, valuesToInsert, valuesToDelete, structuresFullInfo);
                 localUpdated += updated;
                 localInserted += inserted;
                 localSkipped += skipped;
-                
-                Console.WriteLine($"   📈 Результат ArrayParentId={arrayParentId}: updated={updated}, inserted={inserted}, skipped={skipped}");
             }
-            
-            Console.WriteLine($"📉 === ProcessArrayElementsChangeTracking COMPLETED: updated={localUpdated}, inserted={localInserted}, skipped={localSkipped} ===");
             
             return (localUpdated, localInserted, localSkipped);
         }
@@ -1683,9 +1619,6 @@ namespace redb.Core.Postgres.Providers
             List<_RValue> valuesToDelete, 
             Dictionary<long, StructureFullInfo> structuresFullInfo)
         {
-            Console.WriteLine($"     🔍 === CompareArrayElementsByIndex STARTED ===");
-            Console.WriteLine($"       📁 Существующих элементов: {existingElements.Count}, новых: {newElements.Count}");
-            
             int localUpdated = 0, localInserted = 0, localSkipped = 0;
             var maxIndex = Math.Max(existingElements.Count, newElements.Count);
             
@@ -1694,43 +1627,34 @@ namespace redb.Core.Postgres.Providers
                 var existingElement = i < existingElements.Count ? existingElements[i] : null;
                 var newElement = i < newElements.Count ? newElements[i] : null;
                 
-                Console.WriteLine($"       🔄 Индекс [{i}]: existing={existingElement?.Id ?? 0} (Guid={existingElement?.Guid}), new={newElement?.Id ?? 0} (Guid={newElement?.Guid})");
-                
                 if (existingElement != null && newElement != null)
                 {
                     // Оба элемента есть - сравниваем по DbType
                     var structInfo = structuresFullInfo[newElement.IdStructure];
                     var legacyStructuresInfo = new Dictionary<long, string> { { newElement.IdStructure, structInfo.DbType } };
                     
-                    Console.WriteLine($"         🔍 Сравниваем [{i}]: existing Guid={existingElement.Guid} vs new Guid={newElement.Guid}, DbType={structInfo.DbType}");
-                    
                     var changed = await IsValueChanged(existingElement, newElement, legacyStructuresInfo);
                     if (changed)
                     {
-                        Console.WriteLine($"         ✅ ИЗМЕНЕН: Обновляем existing element Id={existingElement.Id}");
                         UpdateExistingValueFields(existingElement, newElement, legacyStructuresInfo);
                         localUpdated++;
                     }
                     else
                     {
-                        Console.WriteLine($"         😴 НЕ ИЗМЕНЕН: Пропускаем element Id={existingElement.Id}");
                         localSkipped++;
                     }
                 }
                 else if (existingElement != null && newElement == null)
                 {
-                    Console.WriteLine($"         🗑️ УДАЛЕНИЕ: Массив сократился, удаляем element Id={existingElement.Id}");
                     valuesToDelete.Add(existingElement);
                 }
                 else if (existingElement == null && newElement != null)
                 {
-                    Console.WriteLine($"         ➕ ДОБАВЛЕНИЕ: Массив увеличился, добавляем new element Id={newElement.Id}");
                     valuesToInsert.Add(newElement);
                     localInserted++;
                 }
             }
             
-            Console.WriteLine($"     📉 === CompareArrayElementsByIndex COMPLETED: updated={localUpdated}, inserted={localInserted}, skipped={localSkipped} ===");
             return (localUpdated, localInserted, localSkipped);
         }
 
@@ -1785,7 +1709,7 @@ namespace redb.Core.Postgres.Providers
                 // Неизвестный тип - считаем что изменился
                 return true;
             }
-            
+
             // 🎯 СПЕЦИАЛЬНАЯ ЛОГИКА ДЛЯ ЭЛЕМЕНТОВ МАССИВОВ БИЗНЕС-КЛАССОВ
             // Если это элемент массива (имеет ArrayIndex) и есть Guid - сравниваем по Guid хешу
             if (oldValue.ArrayIndex.HasValue && newValue.ArrayIndex.HasValue && 
@@ -1971,38 +1895,425 @@ namespace redb.Core.Postgres.Providers
             try
             {
                 // 🎯 КРИТИЧНОЕ ИСПРАВЛЕНИЕ: Сохраняем частями чтобы избежать FK constraint конфликтов
-                Console.WriteLine($"🔧 === КРИТИЧНОЕ ИСПРАВЛЕНИЕ: СОХРАНЯЕМ ПО ЧАСТЯМ ===");
                 
                 // ШАГ 1: Сохраняем объекты и модификации (UPDATE operations)
                 var modifiedCount = _context.ChangeTracker.Entries().Count(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Modified);
                 var deletedCount = _context.ChangeTracker.Entries().Count(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Deleted && e.Entity is _RValue);
                 var addedCount = _context.ChangeTracker.Entries().Count(e => e.State == Microsoft.EntityFrameworkCore.EntityState.Added && e.Entity is _RValue);
                 
-                Console.WriteLine($"   📈 Операции: MODIFIED={modifiedCount}, DELETED={deletedCount}, ADDED={addedCount}");
                 
                 if (modifiedCount > 0 || deletedCount > 0)
                 {
-                    Console.WriteLine($"   ✂️ ШАГ 1: Сохраняем UPDATE + DELETE");
-                    await _context.SaveChangesAsync();
+                await _context.SaveChangesAsync();
                 }
                 
                 if (addedCount > 0)
                 {
-                    Console.WriteLine($"   ➕ ШАГ 2: Сохраняем INSERT");
                     await _context.SaveChangesAsync();
                 }
-                
-                Console.WriteLine($"✅ ВСЕ ОПЕРАЦИИ УСПЕШНО ЗАВЕРШЕНЫ!");
+
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"🚨 ОШИБКА ПРИ СОХРАНЕНИИ: {ex.Message}");
-                if (ex.InnerException != null)
-                {
-                    Console.WriteLine($"📝 ВНУТРЕННЯЯ ОшИБКА: {ex.InnerException.Message}");
-                }
                 throw;
             }
         }
+
+        #region BULK DELETEINSERT OPTIMIZATION
+
+        /// <summary>
+        /// 🚀 OPTIMIZED BULK DELETEINSERT: Максимальная производительность через bulk операции
+        /// Рекурсивное сохранение всех объектов в одной транзакции с контролем уровня
+        /// </summary>
+        private async Task<long> SaveAsyncDeleteInsertBulk<TProps>(IRedbObject<TProps> obj, IRedbUser user) where TProps : class, new()
+        {
+            // 🎯 КОНТРОЛЬ УРОВНЯ ТРАНЗАКЦИИ: создаем транзакцию только на верхнем уровне
+            bool isTopLevel = _context.Database.CurrentTransaction == null;
+            IDbContextTransaction? transaction = null;
+
+            if (isTopLevel)
+            {
+                transaction = await _context.Database.BeginTransactionAsync();
+            }
+
+            try
+            {
+                // === ПОДГОТОВКА ОБЪЕКТА ===
+                if (obj.properties == null)
+                {
+                    throw new ArgumentException("Свойства объекта не могут быть null", nameof(obj));
+                }
+
+                // Пересчет хеша
+                var currentHash = RedbHash.ComputeFor(obj);
+                if (currentHash.HasValue)
+                {
+                    obj.Hash = currentHash.Value;
+                }
+
+                // === 1. СНАЧАЛА сохраняем/обновляем основной объект в _objects ===
+                await EnsureMainObjectSaved(obj, user);
+
+                // === 2. ТЕПЕРЬ рекурсивно сохраняем ВСЕ вложенные RedbObject (с правильным ParentId) ===
+                await ProcessAllNestedRedbObjectsFirst(obj);
+
+                // === 2.5. 🎯 КРИТИЧНО: Обновляем ID ссылок в properties основного объекта ===
+                await SynchronizeNestedObjectIds(obj);
+
+                // === 3. BULK DELETE существующих values (исключая вложенные RedbObject) ===
+                if (obj.Id != 0)
+                {
+                    await BulkDeleteExistingValues(obj.Id);
+                }
+
+                // === 4. Подготовка данных для BULK INSERT ===
+                var valuesList = new List<_RValue>();
+                await PrepareAllValuesForInsert(obj, valuesList);
+
+                // === 5. BULK INSERT всех values одной операцией ===
+                if (valuesList.Any())
+                {
+                    var bulkConfig = new EFCore.BulkExtensions.BulkConfig
+                    {
+                        SetOutputIdentity = true,   // Получаем ID для новых записей
+                        BatchSize = 1000,           // Размер батча
+                        BulkCopyTimeout = 30,       // Таймаут для больших операций
+                        PreserveInsertOrder = true  // Важно для ArrayIndex
+                    };
+                    await _context.BulkInsertAsync(valuesList, bulkConfig);
+                }
+
+                // === 6. COMMIT только на верхнем уровне ===
+                if (isTopLevel && transaction != null)
+                {
+                    await transaction.CommitAsync();
+                }
+
+                return obj.Id;
+            }
+            catch (Exception ex)
+            {
+                if (isTopLevel && transaction != null)
+                {
+                    await transaction.RollbackAsync();
+                }
+                throw;
+            }
+            finally
+            {
+                transaction?.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// 🔗 Рекурсивная обработка всех вложенных RedbObject перед основными bulk операциями
+        /// Сохраняет их в той же транзакции, что обеспечивает получение корректных ID для ссылок
+        /// </summary>
+        private async Task ProcessAllNestedRedbObjectsFirst<TProps>(IRedbObject<TProps> obj) where TProps : class, new()
+        {
+            if (obj.properties == null) return;
+            
+            var nestedObjects = new List<IRedbObject>();
+            
+            // 🔍 ПОИСК всех вложенных RedbObject в свойствах объекта
+            await ExtractNestedRedbObjects(obj.properties, nestedObjects);
+            
+            if (!nestedObjects.Any())
+            {
+                return;
+            }
+            
+            // 🚀 РЕКУРСИВНОЕ СОХРАНЕНИЕ каждого вложенного объекта
+            foreach (var nestedObj in nestedObjects)
+            {
+                if (nestedObj.Id == 0)
+                {
+                    // 🆕 Новый вложенный объект - создаем с родителем
+                    if (nestedObj.ParentId == 0 || nestedObj.ParentId == null)
+                    {
+                        nestedObj.ParentId = obj.Id;
+                    }
+
+                    nestedObj.Id = await SaveAsync((dynamic)nestedObj); // Рекурсивный вызов - попадет обратно в bulk стратегию если нужно
+                }
+                else
+                {
+                    // 🔄 Существующий вложенный объект - обновляем
+                    await SaveAsync((dynamic)nestedObj); // Рекурсивный вызов
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 🔍 Извлечение всех вложенных RedbObject из properties объекта через рефлексию
+        /// </summary>
+        private async Task ExtractNestedRedbObjects(object properties, List<IRedbObject> nestedObjects)
+        {
+            if (properties == null) return;
+            
+            var propertiesType = properties.GetType();
+            var allProperties = propertiesType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            
+            foreach (var prop in allProperties)
+            {
+                try 
+                {
+                    var value = prop.GetValue(properties);
+                    if (value == null) continue;
+                    
+                    var valueType = value.GetType();
+                    
+                    // 🔍 Проверяем одиночный RedbObject
+                    if (IsRedbObjectType(valueType))
+                    {
+                        var redbObj = (IRedbObject)value;
+                        nestedObjects.Add(redbObj);
+                    }
+                    // 🔍 Проверяем массив RedbObject
+                    else if (valueType.IsArray || (valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(IEnumerable<>)))
+                    {
+                        if (value is IEnumerable enumerable)
+                        {
+                            foreach (var item in enumerable)
+                            {
+                                if (item != null && IsRedbObjectType(item.GetType()))
+                                {
+                                    var redbObj = (IRedbObject)item;
+                                    nestedObjects.Add(redbObj);
+                                }
+                            }
+                        }
+                    }
+                    // 🔍 Рекурсивная проверка вложенных бизнес-классов
+                    else if (IsBusinessClassType(valueType))
+                    {
+                        await ExtractNestedRedbObjects(value, nestedObjects);
+                    }
+                    // 🔍 Проверка массивов бизнес-классов
+                    else if (valueType.IsArray && IsBusinessClassType(valueType.GetElementType()!))
+                    {
+                        if (value is IEnumerable enumerable)
+                        {
+                            foreach (var item in enumerable)
+                            {
+                                if (item != null)
+                                {
+                                    await ExtractNestedRedbObjects(item, nestedObjects);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 🔧 КРИТИЧНАЯ СИНХРОНИЗАЦИЯ: Обновляет ID ссылок в properties после сохранения вложенных объектов
+        /// Это гарантирует, что в _values будут сохранены правильные ID ссылки
+        /// </summary>
+        private async Task SynchronizeNestedObjectIds<TProps>(IRedbObject<TProps> obj) where TProps : class, new()
+        {
+            if (obj.properties == null) return;
+            
+            await SynchronizeNestedIdsInProperties(obj.properties);
+        }
+        
+        /// <summary>
+        /// 🔄 Рекурсивная синхронизация ID во всех properties объекта
+        /// </summary>
+        private async Task SynchronizeNestedIdsInProperties(object properties)
+        {
+            if (properties == null) return;
+            
+            var propertiesType = properties.GetType();
+            var allProperties = propertiesType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+            
+            foreach (var prop in allProperties)
+            {
+                try 
+                {
+                    var value = prop.GetValue(properties);
+                    if (value == null) continue;
+                    
+                    var valueType = value.GetType();
+                    
+                    // 🔍 Одиночный RedbObject - проверяем что ID актуальный
+                    if (IsRedbObjectType(valueType))
+                    {
+                        var redbObj = (IRedbObject)value;
+                    }
+                    // 🔍 Массив RedbObject
+                    else if (valueType.IsArray || (valueType.IsGenericType && typeof(IEnumerable).IsAssignableFrom(valueType)))
+                    {
+                        if (value is IEnumerable enumerable)
+                        {
+                            var index = 0;
+                            foreach (var item in enumerable)
+                            {
+                                if (item != null && IsRedbObjectType(item.GetType()))
+                                {
+                                    var redbObj = (IRedbObject)item;
+
+                                    index++;
+                                }
+                            }
+                        }
+                    }
+                    // 🔍 Рекурсивная синхронизация в бизнес-классах
+                    else if (IsBusinessClassType(valueType))
+                    {
+                        await SynchronizeNestedIdsInProperties(value);
+                    }
+                    // 🔍 Массивы бизнес-классов
+                    else if (valueType.IsArray && IsBusinessClassType(valueType.GetElementType()!))
+                    {
+                        if (value is IEnumerable enumerable)
+                        {
+                            foreach (var item in enumerable)
+                            {
+                                if (item != null)
+                                {
+                                    await SynchronizeNestedIdsInProperties(item);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    
+                }
+            }
+        }
+        
+        /// <summary>
+        /// 🗑️ УМНЫЙ BULK DELETE: Удаляет values основного объекта, исключая вложенные RedbObject
+        /// Один SQL запрос вместо множества EF операций для максимальной производительности
+        /// </summary>
+        private async Task BulkDeleteExistingValues(long objectId)
+        {
+            try
+            {
+                var deleteSql = @"
+                    DELETE FROM _values 
+                    WHERE _id_object = @objectId 
+                      AND _id_object NOT IN (
+                          -- 🛡️ ЗАЩИТА: исключаем values вложенных RedbObject
+                          SELECT _id FROM _objects WHERE _id_parent = @objectId
+                      )";
+                
+                var parameterId = new Npgsql.NpgsqlParameter("@objectId", objectId);
+                var rowsDeleted = await _context.Database.ExecuteSqlRawAsync(deleteSql, parameterId);
+                
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// 🏢 Обеспечивает сохранение/обновление основного объекта в таблице _objects
+        /// </summary>
+        private async Task EnsureMainObjectSaved<TProps>(IRedbObject<TProps> obj, IRedbUser user) where TProps : class, new()
+        {
+            try
+            {
+                if (obj.Id == 0)
+                {
+                    // 🆕 НОВЫЙ ОБЪЕКТ - создаем запись в _objects
+                    var newObjectRecord = new _RObject
+                    {
+                        Id = _context.GetNextKey(),
+                        IdScheme = (await _schemeSync.SyncSchemeAsync<TProps>()).Id,
+                        Name = obj.Name ?? "",
+                        Note = obj.Note,
+                        DateCreate = DateTime.Now,
+                        DateModify = DateTime.Now,
+                        IdOwner = obj.OwnerId > 0 ? obj.OwnerId : user.Id,
+                        IdWhoChange = user.Id,
+                        IdParent = obj.ParentId,
+                        Hash = obj.Hash
+                    };
+                    
+                    _context.Objects.Add(newObjectRecord);
+                    await _context.SaveChangesAsync(); // Сохраняем чтобы получить ID
+                    
+                    obj.Id = newObjectRecord.Id;
+                }
+                else
+                {
+                    // 🔄 СУЩЕСТВУЮЩИЙ ОБЪЕКТ - обновляем запись в _objects
+                    var existingObject = await _context.Objects.FirstOrDefaultAsync(o => o.Id == obj.Id);
+                    if (existingObject == null)
+                    {
+                        throw new InvalidOperationException($"Объект с ID {obj.Id} не найден в базе данных");
+                    }
+                    
+                    // Обновляем основные поля
+                    existingObject.Name = obj.Name ?? existingObject.Name;
+                    existingObject.Note = obj.Note ?? existingObject.Note;
+                    existingObject.DateModify = DateTime.Now;
+                    existingObject.IdWhoChange = user.Id;
+                    existingObject.Hash = obj.Hash;
+                    
+                    await _context.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+        }
+        
+        /// <summary>
+        /// 📋 Подготовка всех values объекта для bulk insert операции
+        /// Использует существующую tree-based логику для максимальной совместимости
+        /// </summary>
+        private async Task PrepareAllValuesForInsert<TProps>(IRedbObject<TProps> obj, List<_RValue> valuesList) where TProps : class, new()
+        {
+            try
+            {
+                // 🎯 ИСПОЛЬЗУЕМ СУЩЕСТВУЮЩУЮ ЛОГИКУ: ProcessPropertiesWithTreeStructures
+                // Это обеспечивает полную совместимость с текущей tree-based архитектурой
+                
+                // Получаем схему и дерево структур
+                var scheme = await _schemeSync.GetSchemeByIdAsync(obj.SchemeId);
+                if (scheme == null)
+                {
+                    scheme = await _schemeSync.SyncSchemeAsync<TProps>();
+                    obj.SchemeId = scheme.Id;
+                }
+                
+                var schemeProvider = (PostgresSchemeSyncProvider)_schemeSync;
+                var structureNodes = await schemeProvider.GetSubtreeAsync(obj.SchemeId, null);
+                
+                // Очищаем список для чистой вставки
+                valuesList.Clear();
+                
+                // Обрабатываем все свойства и собираем values
+                await ProcessPropertiesWithTreeStructures(obj, structureNodes, valuesList, new List<IRedbObject>());
+                
+                
+                // 🔧 ИСПРАВЛЯЕМ ССЫЛКИ НА ОБЪЕКТ: все values должны ссылаться на правильный объект
+                foreach (var value in valuesList)
+                {
+                    if (value.IdObject == 0)
+                    {
+                        value.IdObject = obj.Id;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+        }
+
+        #endregion
     }
 }

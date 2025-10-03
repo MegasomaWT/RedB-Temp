@@ -148,7 +148,7 @@ internal class Program
             // Добавляем конфигурацию
                     services.AddSingleton(new RedbServiceConfiguration
         {
-            EavSaveStrategy = EavSaveStrategy.ChangeTracking  // 🔄 ChangeTracking для продакшна (медленнее, но точнее)
+            EavSaveStrategy = EavSaveStrategy.DeleteInsert  // 🔄 ChangeTracking для продакшна (медленнее, но точнее)
         });
         }
 

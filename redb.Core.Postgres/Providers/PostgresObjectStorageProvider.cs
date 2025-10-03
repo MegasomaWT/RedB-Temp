@@ -154,8 +154,20 @@ namespace redb.Core.Postgres.Providers
 
         public async Task<long> SaveAsync<TProps>(IRedbObject<TProps> obj, IRedbUser user) where TProps : class, new()
         {
-            // 🚀 ПЕРЕНАПРАВЛЯЕМ НА НОВЫЙ SaveAsync с правильной архитектурой
-            return await SaveAsyncNew(obj, user);
+            // 🎯 ВЫБОР СТРАТЕГИИ на основе конфигурации
+            var strategy = _configuration.EavSaveStrategy;
+                        
+            switch (strategy)
+            {
+                case EavSaveStrategy.DeleteInsert:
+                    return await SaveAsyncDeleteInsertBulk(obj, user);
+                    
+                case EavSaveStrategy.ChangeTracking:
+                    return await SaveAsyncNew(obj, user);
+                    
+                default:
+                    throw new NotSupportedException($"Стратегия {strategy} не поддерживается");
+            }
         }
 
         /// <summary>

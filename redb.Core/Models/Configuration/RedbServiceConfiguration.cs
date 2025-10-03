@@ -22,7 +22,7 @@ namespace redb.Core.Models.Configuration
         /// Стратегия обработки несуществующих объектов при UPDATE
         /// </summary>
         [JsonConverter(typeof(MissingObjectStrategyJsonConverter))]
-        public MissingObjectStrategy MissingObjectStrategy { get; set; } = MissingObjectStrategy.ThrowException;
+        public MissingObjectStrategy MissingObjectStrategy { get; set; } = MissingObjectStrategy.AutoSwitchToInsert;
 
         // === НАСТРОЙКИ БЕЗОПАСНОСТИ ПО УМОЛЧАНИЮ ===
 
@@ -130,7 +130,7 @@ namespace redb.Core.Models.Configuration
         /// Стратегия сохранения EAV свойств
         /// </summary>
         [JsonConverter(typeof(EavSaveStrategyJsonConverter))]
-        public EavSaveStrategy EavSaveStrategy { get; set; } = EavSaveStrategy.ChangeTracking;
+        public EavSaveStrategy EavSaveStrategy { get; set; } = EavSaveStrategy.DeleteInsert;
 
 
 
